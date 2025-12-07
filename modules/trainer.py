@@ -6,6 +6,7 @@ import random
 import numpy as np
 from torch.amp import GradScaler, autocast
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 class Trainer:
     def __init__(self,
@@ -13,7 +14,8 @@ class Trainer:
                  images_path:os.PathLike,
                  audios_path:os.PathLike,
                  labels_path:os.PathLike,
-                 device:torch.device,):
+                 device:torch.device,
+                 log_dir:os.PathLike="runs/sound_control"):
         
         self.model = model
         self.imgsz = model.imgsz
@@ -21,6 +23,8 @@ class Trainer:
         self.audios_path = audios_path
         self.labels_path = labels_path
         self.device = device
+
+        self.writer = SummaryWriter(log_dir)
 
         self.labels = os.listdir(labels_path)
         self.valid_labels = self.labels[:int(len(self.labels)//9)]
@@ -53,12 +57,20 @@ class Trainer:
         scaler = GradScaler()
         self.model.train(True)
 
+        self.writer.add_hparams(
+            {'lr': lr, 'batch_size': batch_size, 'epochs': epochs}, 
+            {'hparam/placeholder': 0}
+        )
+
+        global_step = 0
+
         for epoch in range(epochs):
             num_batches = len(train_loader)
 
             for batch_idx, batch_data in enumerate(train_loader):
                 if batch_data is None: continue
                 optim.zero_grad()
+                global_step += 1
 
                 frames, audios, bboxes, target, bbox_masks = [x.to(self.device, non_blocking=True) for x in batch_data]
                 with autocast(device_type='cuda', dtype=torch.float32):
@@ -72,6 +84,8 @@ class Trainer:
                 scaler.scale(final_loss).backward()
                 scaler.step(optim)
                 scaler.update()
+
+                self.writer.add_scalar('Loss/Train_Batch', final_loss.item(), global_step)
 
                 total = 33
                 progress = math.ceil(batch_idx*total/num_batches)
@@ -108,37 +122,14 @@ class Trainer:
                         f"Loss: {gloss/iter:.06f}"
                         )
                     print(label, end="\r")
+
+            avg_valid_loss = gloss / iter
+            self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
+            
             torch.save(self.model.state_dict(), "model.pt")
 
         self.model.train(False)
         return self.model
-    
-    def create_batch(self, start, end, train=True):
-        frames = []
-        audios = []
-        bboxes = []
-        target = []
-        bbox_masks = []
-
-        for i in range(start, end):
-            label_path = os.path.join(self.labels_path, self.train_labels[i]) if train else os.path.join(self.labels_path, self.valid_labels[i])
-            frame, audio, bbox, selected_box, bbox_mask = self.load_data(label_path)
-            if frame is None:
-                continue
-            frames.append((frame/255.0).to(self.device))
-            audios.append(audio.to(self.device))
-            bboxes.append((bbox/self.imgsz).to(self.device))
-            target.append(selected_box.to(self.device))
-            bbox_masks.append(bbox_mask.to(self.device))
-
-        frames = torch.cat(frames, dim=0)
-        audios = torch.cat(audios, dim=0)
-        bboxes = torch.cat(bboxes, dim=0)
-        target = torch.cat(target, dim=0)
-        bbox_masks = torch.cat(bbox_masks, dim=0)
-
-        return frames, audios, bboxes, target, bbox_masks
-        
     
 def collate_fn(batch):
     batch = [item for item in batch if item is not None]
