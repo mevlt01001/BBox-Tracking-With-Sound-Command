@@ -1,141 +1,36 @@
 import torch
 import torch.nn as nn
-from feats import AudioCNNFeats, ImageCNNEncoder, BboxCNNEncoder
-
-class AttnBlock(nn.Module):
-    """Batch-first pre-normalized **Multi Head Attention** block.
-
-    Args:
-        embeddim (int): Embedding dimension
-        num_heads (int, optional): Number of heads. Defaults to 8.
-        dropout (float, optional): Defaults to 0.1.
-        mlp_ratio (float, optional): Feed forward projection ratio. Defaults to 4.0.
-    """
-    def __init__(self, 
-                 embeddim, 
-                 num_heads:int=8,
-                 dropout:float=0.1,
-                 mlp_ratio:float=4.0):
-        
-        super().__init__()
-
-        self.q_norm = nn.LayerNorm(embeddim)
-        self.kv_norm  = nn.LayerNorm(embeddim)
-        self.attn  = nn.MultiheadAttention(embeddim, num_heads, batch_first=True, dropout=dropout)
-        self.norm = nn.LayerNorm(embeddim)
-        self.dropout = nn.Dropout(dropout)
-
-        self.mlp   = nn.Sequential(
-            nn.Linear(embeddim, int(embeddim * mlp_ratio)),
-            nn.SiLU(),
-            nn.Linear(int(embeddim * mlp_ratio), embeddim),
-        )
-
-    def forward(self, q, k, v, key_padding_mask=None): 
-        # Layer Normalization
-        nq, nk, nv = self.q_norm(q), self.kv_norm(k), self.kv_norm(v)
-
-        # MultiHead Attention - Add
-        attn_out, _ = self.attn.forward(nq,nk,nv,key_padding_mask,need_weights=False)
-        attn_out = self.dropout(attn_out)
-        q = q + attn_out
-
-        # Layer Normalization
-        nq = self.norm(q) 
-        
-        # Feed Forward - Add
-        mlp_out = self.mlp(nq)
-        mlp_out = self.dropout(mlp_out)
-        q = q + mlp_out
-
-        return q
-    
-class AudioSeqEncoder(nn.Module):
-    """Audio Sequence Encoder
-
-    Process audio data shaped like [batch_size, seqnum, embeddim], after AudioCNNFeats.\\
-    Uses Multi Head Self-Attention.
-
-    Args:
-        seqnum (int): Sequence number
-        embeddim (int): Embedding dimension
-        num_layers (int, optional): Number of layers. Defaults to 4.
-        num_heads (int, optional): Number of heads. Defaults to 4.
-        dropout (float, optional): Defaults to 0.1.
-        mlp_ratio (float, optional): Feed forward projection ratio. Defaults to 2.0.
-    """
-    def __init__(self, 
-                 embeddim:int,
-                 num_layers:int=4, 
-                 num_heads:int=4, 
-                 dropout:float=0.1, 
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-
-    def forward(self, audio_data:torch.Tensor):
-        q = audio_data
-        for layer in self.AttnBlocks:
-            q = layer(q, q, q)
-        return q
-    
-class AudioImageDecoder(nn.Module):
-
-    def __init__(self,
-                 embeddim:int,
-                 num_layers:int=4,
-                 num_heads:int=4,
-                 dropout:float=0.1,
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-
-    def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor):
-        q = audio_data
-        for layer in self.AttnBlocks:
-            q = layer(q, image_data, image_data)
-        return q
-    
-class BboxImageDecoder(nn.Module):
-
-    def __init__(self,
-                 embeddim:int,
-                 num_layers:int=4,
-                 num_heads:int=4,
-                 dropout:float=0.1,
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-
-    def forward(self, bbox_data:torch.Tensor, image_data:torch.Tensor):
-        q = bbox_data
-        for layer in self.AttnBlocks:
-            q = layer(q, image_data, image_data)
-        return q
-
+from .feats import AudioCNNFeats, ImageCNNEncoder, BboxCNNEncoder
+from .ntransformers import AudioSeqEncoder, AudioImageDecoder, BboxContextDecoder
+from .trainer import Trainer
 
 class Model(nn.Module):
     def __init__(self,
+                 imgsz:int,
                  embeddim:int,
                  num_layers:int=4,
                  num_heads:int=4,
                  dropout:float=0.1,
                  mlp_ratio:float=2.0,
                  n_mels:int = 256,
+                 max_seconds:int = 10,
                  sr:int = 25500,
+                 bbox_size:int = 20,
+                 device:torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                  ):
         super().__init__()
 
+        self.imgsz = imgsz
         self.sr = sr
+        self.max_seconds = max_seconds
         self.n_mels = n_mels
         self.embeddim = embeddim
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
         self.dropout = dropout
+        self.bbox_size = bbox_size
+        self.device = device
 
         self.audio_cnn_feats = AudioCNNFeats(embeddim, n_mels, sr)
         self.image_encoder = ImageCNNEncoder(embeddim)
@@ -143,7 +38,7 @@ class Model(nn.Module):
 
         self.audio_encoder = AudioSeqEncoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
         self.audio_image_decoder = AudioImageDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
-        self.bbox_image_decoder = BboxImageDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
+        self.bbox_image_decoder = BboxContextDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
 
         self.lineer1 = nn.Linear(embeddim, 1)
 
@@ -157,7 +52,7 @@ class Model(nn.Module):
             bbox_mask (torch.Tensor): [batch_size, S_B]. This boolean or binary tensor indicates which bounding boxes are ignored. Since we want to batched inference, we need to same shape as bbox_data that is why we need this mask.
 
         Returns:
-            pass
+            selected_bboxes_idx (torch.Tensor): Selected bounding boxes idx shaped like [batch_size, S_B].
         """
 
         #Audio_data.shape = [B, wave_data]
@@ -177,10 +72,56 @@ class Model(nn.Module):
         # audio_image_data.shape = [B, S_A, embeddim]
         # audio_image_bbox_data.shape = [B, S_B, embeddim]
 
-        selected_bboxes = self.lineer1(audio_image_bbox_data).squeeze(-1)
-        # selected_bboxes.shape = [B, S_B] -> Softmax -> CalcLoss
+        selected_bboxes_idx = self.lineer1(audio_image_bbox_data).squeeze(-1)
+        # selected_bboxes_idx.shape = [B, S_B]
 
-        return selected_bboxes
+        bbox_logits = selected_bboxes_idx.masked_fill(bbox_mask, float('-inf'))
+        # selected_bboxes_idx.shape = [B, S_B]
+        if self.training:
+            return bbox_logits
 
+        probs = torch.sigmoid(bbox_logits)
 
-        
+        return probs
+    
+    def train(self, mode=True,**kwargs):
+        """Set the module in training mode or train a model.
+
+        To train please provide the following kwargs:
+        - images_path (str)
+        - audios_path (str)
+        - labels_path (str)
+        - epochs (int)
+        - batch_size (int)
+        - lr (float)
+
+        This has an effect only on certain modules. See the documentation of
+        particular modules for details of their behaviors in training/evaluation
+        mode, i.e., whether they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        etc.
+
+        Args:
+            mode (bool): whether to set training mode (``True``) or evaluation mode (``False``). Default: ``True``.
+            images_path (str): the path of images.
+            audios_path (str): the path of audios.
+            labels_path (str): the path of labels.
+            epochs (int): number of epochs
+            batch_size (int): batch size
+            lr (float): learning rate
+
+        Returns:
+            Module: self
+        """
+        if "images_path" and "audios_path" and "labels_path" and "epochs" and "batch_size" and "lr" in kwargs:
+            images_path = kwargs["images_path"]
+            audios_path = kwargs["audios_path"]
+            labels_path = kwargs["labels_path"]
+            epochs = kwargs["epochs"]
+            batch_size = kwargs["batch_size"]
+            lr = kwargs["lr"]
+
+            trainer = Trainer(self.to(self.device), images_path, audios_path, labels_path, device=self.device)
+            self = trainer.train(epochs, batch_size, lr)
+        else:
+            return super().train(mode)
+            

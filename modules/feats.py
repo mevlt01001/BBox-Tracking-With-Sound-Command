@@ -1,9 +1,16 @@
-import torch, torchaudio
+import torch
 import torch.nn as nn
 from torchvision.models import resnet
 from nnAudio.features import MelSpectrogram
 
 class AudioCNNFeats(nn.Module):
+    """
+    Audio Feature Extractor with mel-spectrogram.
+    Args:
+        out_channel (int, optional): Output channel/embedding dimension. Defaults to 512.
+        n_mels (int, optional): Number of mel-bands. Defaults to 256.
+        sr (int, optional): Sampling rate. Defaults to 25500.
+    """
     def __init__(self, out_channel=512, n_mels=256, sr=25500):
         super().__init__()
         
@@ -35,13 +42,17 @@ class AudioCNNFeats(nn.Module):
         # X.shape = (B, 1, 459000)
         x = self.mel_spectrogram.forward(x)
         x = torch.log(x + 1e-10)
-        print(x.shape)
         x = self.audio_feature_extractor(x)
         x = x.permute(0, 2, 1)
         # x.shape = (B, 128, embeddim)
         return x
     
 class ImageCNNEncoder(nn.Module):
+    """
+    Image Feature Extractor with ResNet18. This extractor is pretrained on ImageNet.
+    Args:
+        out_channel (int, optional): Output channel/embedding dimension. Defaults to 512.
+    """
     def __init__(self, out_channel=512):
         super().__init__()
         
@@ -67,6 +78,11 @@ class ImageCNNEncoder(nn.Module):
         return x
 
 class BboxCNNEncoder(nn.Module):
+    """
+    Bbox Feature Extractor with Conv1d. Used to extract bbox features and give them embeddings.
+    Args:
+        out_channel (int, optional): Output channel/embedding dimension. Defaults to 512.
+    """
     def __init__(self, out_channel=512):
         super().__init__()
         
@@ -85,13 +101,3 @@ class BboxCNNEncoder(nn.Module):
         x = self.bbox_encoder(x)
         x = x.permute(0, 2, 1)
         return x
-
-AudioEncoder = AudioCNNFeats(512, 512, 25500)
-ImageEncoder = ImageCNNEncoder(512)
-BBoxEncoder = BboxCNNEncoder(512)
-
-wav, sr = torchaudio.load("dataset/augmented_audios/03234_009.wav")
-# print(wav.shape, wav.dtype)
-
-data = torch.rand(4,16567)
-print(AudioEncoder(wav).shape)
