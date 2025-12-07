@@ -1,4 +1,4 @@
-import os
+import os, math
 import json
 import torch, cv2
 import torchaudio
@@ -23,8 +23,8 @@ class Trainer:
         self.device = device
 
         self.labels = os.listdir(labels_path)
-        self.valid_labels = self.labels[:int(len(self.labels)//10)]
-        self.train_labels = self.labels[int(len(self.labels)//10):]
+        self.valid_labels = self.labels[:int(len(self.labels)//9)]
+        self.train_labels = self.labels[int(len(self.labels)//9):]
 
     def train(self, epochs:int, batch_size:int=16, lr:float=0.01):
 
@@ -40,12 +40,12 @@ class Trainer:
 
         train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True, 
-            num_workers=4, pin_memory=True, collate_fn=collate_fn, persistent_workers=True
+            num_workers=8, pin_memory=True, collate_fn=collate_fn, persistent_workers=True
         )
         
         valid_loader = DataLoader(
             valid_ds, batch_size=batch_size, shuffle=False, 
-            num_workers=2, pin_memory=True, collate_fn=collate_fn
+            num_workers=8, pin_memory=True, collate_fn=collate_fn
         )
 
         criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
@@ -73,9 +73,14 @@ class Trainer:
                 scaler.step(optim)
                 scaler.update()
 
-
-                label = f"Epoch: {epoch+1:03}/{epochs}, [%{batch_idx/num_batches:.2f}]Batch: \
-                    {batch_idx+1:03}/{num_batches+1}, Loss: {final_loss.item():.06f}"
+                total = 33
+                progress = math.ceil(batch_idx*total/num_batches)
+                remain = total - progress
+                label = (
+                        f"Epoch: {epoch+1:3d}/{epochs} "
+                        f"Batch: {batch_idx+1:4d}/{num_batches+1}  [{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                        f"Loss: {final_loss.item():.06f}"
+                        )
                 print(label, end="\r")
             # Validation
             with torch.no_grad():
@@ -98,8 +103,8 @@ class Trainer:
                     iter += 1
                     
                     label = (
-                        f"Epoch: {epoch+1:03}/{epochs}"
-                        f"[%{batch_idx/num_batches:.2f}]Batch: {batch_idx+1:03}/{num_batches+1}"
+                        f"Epoch[{epoch+1:03}/{epochs}]"
+                        f"Batch[{batch_idx+1:03}/{num_batches+1}] |{'█'*int(batch_idx/num_batches)*33}|%[{100*(batch_idx/num_batches):.2f}]"
                         f"Loss: {gloss/iter:.06f}"
                         )
                     print(label, end="\r")
@@ -166,7 +171,6 @@ class AudioVisualDataset(Dataset):
         return len(self.file_list)
 
     def __getitem__(self, idx):
-        # Senin 'load_data' fonksiyonunun içi buraya gelecek
         label_file = self.file_list[idx]
         label_path = os.path.join(self.labels_dir, label_file)
         

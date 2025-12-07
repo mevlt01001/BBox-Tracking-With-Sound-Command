@@ -65,6 +65,7 @@ class AudioSeqEncoder(nn.Module):
     """
     def __init__(self, 
                  embeddim:int,
+                 audio_seq:int,
                  num_layers:int=4, 
                  num_heads:int=4, 
                  dropout:float=0.1, 
@@ -72,9 +73,10 @@ class AudioSeqEncoder(nn.Module):
         super().__init__()
 
         self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
+        self.PE = nn.Parameter(torch.rand(audio_seq, embeddim))
 
     def forward(self, audio_data:torch.Tensor):
-        q = audio_data
+        q = audio_data + self.PE[None, :, :]
         for layer in self.AttnBlocks:
             q = layer(q, q, q)
         return q
@@ -92,6 +94,7 @@ class AudioImageDecoder(nn.Module):
     """
     def __init__(self,
                  embeddim:int,
+                 image_seq:int,
                  num_layers:int=4,
                  num_heads:int=4,
                  dropout:float=0.1,
@@ -99,9 +102,11 @@ class AudioImageDecoder(nn.Module):
         super().__init__()
 
         self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
+        self.PE = nn.Parameter(torch.rand(image_seq, embeddim))
 
     def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor):
         q = audio_data
+        image_data = image_data + self.PE[None, :, :]
         for layer in self.AttnBlocks:
             q = layer(q, image_data, image_data)
         return q

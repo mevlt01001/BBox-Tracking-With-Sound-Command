@@ -35,12 +35,14 @@ class Model(nn.Module):
         self.audio_cnn_feats = AudioCNNFeats(embeddim, n_mels, sr)
         self.image_encoder = ImageCNNEncoder(embeddim)
         self.bbox_encoder = BboxCNNEncoder(embeddim)
+        self.set_seqs()
 
-        self.audio_encoder = AudioSeqEncoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
-        self.audio_image_decoder = AudioImageDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
+        self.audio_encoder = AudioSeqEncoder(embeddim, self.audio_seq, num_layers, num_heads, dropout, mlp_ratio)
+        self.audio_image_decoder = AudioImageDecoder(embeddim, self.image_seq, num_layers, num_heads, dropout, mlp_ratio)
         self.bbox_image_decoder = BboxContextDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
 
         self.lineer1 = nn.Linear(embeddim, 1)
+
 
     def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor, bbox_data:torch.Tensor, bbox_mask:torch.Tensor):
         """
@@ -83,6 +85,17 @@ class Model(nn.Module):
         probs = torch.sigmoid(bbox_logits)
 
         return probs
+    
+    @torch.no_grad()
+    def set_seqs(self):
+        audio_dummy = torch.rand(1, self.sr*self.max_seconds)
+        image_dummy = torch.rand(1, 3, self.imgsz, self.imgsz)
+        out = self.audio_cnn_feats.forward(audio_dummy)
+        self.audio_seq = out.shape[1]
+        out = self.image_encoder.forward(image_dummy)
+        self.image_seq = out.shape[1]
+        del audio_dummy, image_dummy, out
+
     
     def train(self, mode=True,**kwargs):
         """Set the module in training mode or train a model.
