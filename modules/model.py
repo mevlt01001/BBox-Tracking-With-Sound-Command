@@ -131,9 +131,10 @@ class Model(nn.Module):
             labels_path = kwargs["labels_path"]
             epochs = kwargs["epochs"]
             batch_size = kwargs["batch_size"]
+            valid_ratio = kwargs["valid_ratio"]
             lr = kwargs["lr"]
 
-            trainer = Trainer(self.to(self.device), images_path, audios_path, labels_path, device=self.device)
+            trainer = Trainer(self.to(self.device), images_path, audios_path, labels_path, self.device, valid_ratio)
             self = trainer.train(epochs, batch_size, lr)
         else:
             return super().train(mode)
