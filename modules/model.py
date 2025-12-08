@@ -126,15 +126,26 @@ class Model(nn.Module):
             Module: self
         """
         if "images_path" and "audios_path" and "labels_path" and "epochs" and "batch_size" and "lr" in kwargs:
-            images_path = kwargs["images_path"]
-            audios_path = kwargs["audios_path"]
-            labels_path = kwargs["labels_path"]
-            epochs = kwargs["epochs"]
-            batch_size = kwargs["batch_size"]
-            valid_ratio = kwargs["valid_ratio"]
-            lr = kwargs["lr"]
+            images_path = kwargs.get("images_path")
+            audios_path = kwargs.get("audios_path")
+            labels_path = kwargs.get("labels_path")
+            epochs = kwargs.get("epochs")
+            batch_size = kwargs.get("batch_size")
+            valid_ratio = kwargs.get("valid_ratio")
+            valid = kwargs.get("valid")
+            lr = kwargs.get("lr")
+            log_dir = kwargs.get("log_dir", "runs/sound_control")
 
-            trainer = Trainer(self.to(self.device), images_path, audios_path, labels_path, self.device, valid_ratio)
+            trainer = Trainer(
+                model=self.to(self.device), 
+                images_path=images_path, 
+                audios_path=audios_path, 
+                labels_path=labels_path, 
+                device=self.device, 
+                valid_ratio=valid_ratio, 
+                valid=valid, 
+                log_dir=log_dir)
+            
             self = trainer.train(epochs, batch_size, lr)
         else:
             return super().train(mode)

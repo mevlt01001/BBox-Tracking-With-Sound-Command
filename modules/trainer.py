@@ -16,6 +16,7 @@ class Trainer:
                  labels_path:os.PathLike,
                  device:torch.device,
                  valid_ratio:float=0.2,
+                 valid=True,
                  log_dir:os.PathLike="runs/sound_control"):
         
         self.model = model
@@ -24,6 +25,7 @@ class Trainer:
         self.audios_path = audios_path
         self.labels_path = labels_path
         self.device = device
+        self.valid = valid
 
         self.writer = SummaryWriter(log_dir)
 
@@ -97,45 +99,46 @@ class Trainer:
                 label = (
                         f"Epoch: {epoch+1:3d}/{epochs} "
                         f"Batch: {batch_idx+1:4d}/{num_batches+1}  [{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                        f"LR: {scheduler.get_last_lr()[0]:.06f} "
+                        f"LR: {scheduler.get_last_lr()[0]:.07f} "
                         f"Loss: {final_loss.item():.06f}"
                         )
                 print(label, end="\r")
             self.save(epoch)
-            # Validation
-            with torch.no_grad():
-                gloss = 0
-                iter = 0
-                num_batches = len(valid_loader)
-                for batch_idx, batch_data in enumerate(valid_loader):
-                    if batch_data is None: continue
+            if self.valid:
+                # Validation
+                with torch.no_grad():
+                    gloss = 0
+                    iter = 0
+                    num_batches = len(valid_loader)
+                    for batch_idx, batch_data in enumerate(valid_loader):
+                        if batch_data is None: continue
 
-                    frames, audios, bboxes, target, bbox_masks = [x.to(self.device, non_blocking=True) for x in batch_data]
-                    pred = self.model.forward(audios, frames, bboxes, bbox_masks) # [B, N]
+                        frames, audios, bboxes, target, bbox_masks = [x.to(self.device, non_blocking=True) for x in batch_data]
+                        pred = self.model.forward(audios, frames, bboxes, bbox_masks) # [B, N]
 
-                    loss = criterion.forward(pred, target.float()) # [B, N]
-                    valid_mask = ~bbox_masks
-                    if valid_mask.sum() > 0:
-                        final_loss = loss[valid_mask].mean()
-                    else:
-                        final_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-                    gloss += final_loss.item()
-                    iter += 1
+                        loss = criterion.forward(pred, target.float()) # [B, N]
+                        valid_mask = ~bbox_masks
+                        if valid_mask.sum() > 0:
+                            final_loss = loss[valid_mask].mean()
+                        else:
+                            final_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+                        gloss += final_loss.item()
+                        iter += 1
 
-                    loss = gloss / iter
-                    
-                    total = 33
-                    progress = math.ceil(batch_idx*total/num_batches)
-                    remain = total - progress
-                    label = (
-                            f"Epoch {epoch+1:3d}/{epochs} Valitadion: "
-                            f"[{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                            f"Loss: {loss:.06f}"
-                            )
-                    print(label, end="\r")
-                print("\n")
-            avg_valid_loss = gloss / iter
-            self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
+                        loss = gloss / iter
+                        
+                        total = 33
+                        progress = math.ceil(batch_idx*total/num_batches)
+                        remain = total - progress
+                        label = (
+                                f"Epoch {epoch+1:3d}/{epochs} Valitadion: "
+                                f"[{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                                f"Loss: {loss:.06f}"
+                                )
+                        print(label, end="\r")
+                avg_valid_loss = gloss / iter
+                self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
+            print("\n")
 
         self.model.train(False)
         return self.model
