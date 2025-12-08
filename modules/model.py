@@ -1,4 +1,4 @@
-import torch
+import torch, os
 import torch.nn as nn
 from .feats import AudioCNNFeats, ImageCNNEncoder, BboxCNNEncoder
 from .ntransformers import AudioSeqEncoder, AudioImageDecoder, BboxContextDecoder
@@ -16,7 +16,7 @@ class Model(nn.Module):
                  max_seconds:int = 10,
                  sr:int = 25500,
                  bbox_size:int = 20,
-                 device:torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                 device:torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
                  ):
         super().__init__()
 
@@ -137,4 +137,23 @@ class Model(nn.Module):
             self = trainer.train(epochs, batch_size, lr)
         else:
             return super().train(mode)
-            
+
+    @classmethod
+    def load(self, checkpoint_path:os.PathLike, device="cpu"):
+        ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
+        cls = self(
+            imgsz=ckpt["imgsz"],
+            embeddim=ckpt["embeddim"],
+            num_layers=ckpt["num_layers"],
+            num_heads=ckpt["num_heads"],
+            dropout=ckpt["dropout"],
+            mlp_ratio=ckpt["mlp_ratio"],
+            n_mels=ckpt["n_mels"],
+            max_seconds=ckpt["max_seconds"],
+            sr=ckpt["sr"],
+            bbox_size=ckpt["bbox_size"],
+            device=device
+        )
+        cls.load_state_dict(ckpt["state_dict"])
+        return cls
+        

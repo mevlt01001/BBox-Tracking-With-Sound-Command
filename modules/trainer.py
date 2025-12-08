@@ -96,6 +96,7 @@ class Trainer:
                         f"Loss: {final_loss.item():.06f}"
                         )
                 print(label, end="\r")
+            self.save(epoch)
             # Validation
             with torch.no_grad():
                 gloss = 0
@@ -115,21 +116,41 @@ class Trainer:
                         final_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
                     gloss += final_loss.item()
                     iter += 1
-                    
-                    label = (
-                        f"Epoch[{epoch+1:03}/{epochs}]"
-                        f"Batch[{batch_idx+1:03}/{num_batches+1}] |{'█'*int(batch_idx/num_batches)*33}|%[{100*(batch_idx/num_batches):.2f}]"
-                        f"Loss: {gloss/iter:.06f}"
-                        )
-                    print(label, end="\r")
 
+                    loss = gloss / iter
+                    
+                    total = 33
+                    progress = math.ceil(batch_idx*total/num_batches)
+                    remain = total - progress
+                    label = (
+                            f"Epoch {epoch+1:3d}/{epochs} Valitadion: "
+                            f"[{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                            f"Loss: {loss:.06f}"
+                            )
+                    print(label, end="\r")
+                print("\n")
             avg_valid_loss = gloss / iter
             self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
-            
-            torch.save(self.model.state_dict(), "model.pt")
 
         self.model.train(False)
         return self.model
+    
+    def save(self, epoch:int):
+        os.makedirs("checkpoints", exist_ok=True)
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'imgsz': self.model.imgsz,
+            'embeddim': self.model.embeddim,
+            'num_layers': self.model.num_layers,
+            'num_heads': self.model.num_heads,
+            'dropout': self.model.dropout,
+            'mlp_ratio': self.model.mlp_ratio,
+            'n_mels': self.model.n_mels,
+            'max_seconds': self.model.max_seconds,
+            'sr': self.model.sr,
+            'bbox_size': self.model.bbox_size
+        }, f"checkpoints/model_epoch_{epoch}.pt")
+
     
 def collate_fn(batch):
     batch = [item for item in batch if item is not None]
@@ -218,5 +239,4 @@ class AudioVisualDataset(Dataset):
 
             return frame, audio, bboxes.unsqueeze(0), selecting_bbox.unsqueeze(0), bbox_mask.unsqueeze(0)
         except Exception as e:
-            print(f"\nError while running for {audio_path}: {e}",end="\n")
             return None
