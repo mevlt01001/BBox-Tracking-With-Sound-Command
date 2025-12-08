@@ -15,6 +15,7 @@ class Trainer:
                  audios_path:os.PathLike,
                  labels_path:os.PathLike,
                  device:torch.device,
+                 valid_ratio:float=0.2,
                  log_dir:os.PathLike="runs/sound_control"):
         
         self.model = model
@@ -27,8 +28,8 @@ class Trainer:
         self.writer = SummaryWriter(log_dir)
 
         self.labels = os.listdir(labels_path)
-        self.valid_labels = self.labels[:int(len(self.labels)//9)]
-        self.train_labels = self.labels[int(len(self.labels)//9):]
+        self.valid_labels = self.labels[:int(len(self.labels)*valid_ratio)]
+        self.train_labels = self.labels[int(len(self.labels)*valid_ratio):]
 
     def train(self, epochs:int, batch_size:int=16, lr:float=0.01):
 
