@@ -55,6 +55,7 @@ class Trainer:
 
         criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
         optim = torch.optim.Adam(self.model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, len(train_loader), T_mult=2, eta_min=1e-6)
         scaler = GradScaler()
         self.model.train(True)
 
@@ -84,9 +85,11 @@ class Trainer:
                         final_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
                 scaler.scale(final_loss).backward()
                 scaler.step(optim)
+                scheduler.step()
                 scaler.update()
 
                 self.writer.add_scalar('Loss/Train_Batch', final_loss.item(), global_step)
+                self.writer.add_scalar('Learning_Rate', scheduler.get_last_lr()[0], global_step)
 
                 total = 33
                 progress = math.ceil(batch_idx*total/num_batches)
@@ -94,6 +97,7 @@ class Trainer:
                 label = (
                         f"Epoch: {epoch+1:3d}/{epochs} "
                         f"Batch: {batch_idx+1:4d}/{num_batches+1}  [{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                        f"LR: {scheduler.get_last_lr()[0]:.06f} "
                         f"Loss: {final_loss.item():.06f}"
                         )
                 print(label, end="\r")
