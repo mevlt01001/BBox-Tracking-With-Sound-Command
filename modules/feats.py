@@ -14,18 +14,15 @@ class AudioCNNFeats(nn.Module):
     def __init__(self, out_channel=512, n_mels=256, sr=25500):
         super().__init__()
         
-        k1 = max(n_mels, 128)
-        k2 = max(k1, 256)
+        k1 = max(n_mels, 256)
+        k2 = out_channel
 
         self.audio_feature_extractor = nn.Sequential(
-            nn.Conv1d(in_channels=n_mels, out_channels=k1, kernel_size=7, stride=3),
+            nn.Conv1d(in_channels=n_mels, out_channels=k1, kernel_size=5, stride=1),
             nn.GroupNorm(1,k1),
             nn.SiLU(),
-            nn.Conv1d(in_channels=k1, out_channels=k2, kernel_size=5, stride=2, padding=2),
+            nn.Conv1d(in_channels=k1, out_channels=k2, kernel_size=5, stride=2),
             nn.GroupNorm(1, k2),
-            nn.SiLU(),
-            nn.Conv1d(in_channels=k2, out_channels=out_channel, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(1, out_channel),
             nn.SiLU(),
         )
 
@@ -41,7 +38,6 @@ class AudioCNNFeats(nn.Module):
     def forward(self, x):
         # X.shape = (B, 1, 459000)
         x = self.mel_spectrogram.forward(x)
-        x = torch.log(x + 1e-10)
         x = self.audio_feature_extractor(x)
         x = x.permute(0, 2, 1)
         # x.shape = (B, 128, embeddim)
