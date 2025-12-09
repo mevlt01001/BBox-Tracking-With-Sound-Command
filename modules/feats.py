@@ -87,17 +87,15 @@ class BboxCNNEncoder(nn.Module):
         super().__init__()
         
         self.bbox_encoder = nn.Sequential(
-            nn.Conv1d(in_channels=4, out_channels=256, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(1, 256),
+            nn.Linear(in_features=4, out_features=64),
             nn.SiLU(),
-            nn.Conv1d(in_channels=256, out_channels=out_channel, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(1, out_channel),
+            nn.Linear(in_features=64, out_features=256),
             nn.SiLU(),
+            nn.Linear(in_features=256, out_features=out_channel),
+            nn.SiLU()
         )
 
     def forward(self, x:torch.Tensor):
         # X.shape = (B, N, 4)
-        x = x.permute(0, 2, 1)
         x = self.bbox_encoder(x)
-        x = x.permute(0, 2, 1)
         return x
