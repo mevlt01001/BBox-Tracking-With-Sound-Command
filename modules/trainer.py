@@ -57,7 +57,7 @@ class Trainer:
 
         criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
         optim = torch.optim.Adam(self.model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, len(train_loader), T_mult=2, eta_min=1e-6)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, len(train_loader), T_mult=2, eta_min=1e-5)
         scaler = GradScaler()
         self.model.train(True)
 
