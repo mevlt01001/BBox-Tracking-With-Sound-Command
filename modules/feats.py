@@ -31,7 +31,7 @@ class AudioCNNFeats(nn.Module):
 
         self.mel_spectrogram = MelSpectrogram(
             sr=sr,
-            n_fft=1024,
+            n_fft=2024,
             n_mels=n_mels,
             hop_length=512,
             center=True,
