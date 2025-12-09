@@ -33,7 +33,9 @@ class Model(nn.Module):
         self.device = device
 
         self.audio_cnn_feats = AudioCNNFeats(embeddim, n_mels, sr)
-        self.image_encoder = ImageCNNEncoder(embeddim)
+        self.image_encoder = ImageCNNEncoder(embeddim) # Freezed
+        for param in self.image_encoder.parameters():
+            param.requires_grad = False
         self.bbox_encoder = BboxCNNEncoder(embeddim)
         self.set_seqs()
 
