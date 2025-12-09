@@ -1,5 +1,5 @@
 import os, math
-import json
+import json, time
 import torch, cv2
 import torchaudio
 import random
@@ -70,7 +70,8 @@ class Trainer:
 
         for epoch in range(epochs):
             num_batches = len(train_loader)
-
+            start = time.time()
+            label = ""
             for batch_idx, batch_data in enumerate(train_loader):
                 if batch_data is None: continue
                 optim.zero_grad()
@@ -100,10 +101,12 @@ class Trainer:
                         f"Epoch: {epoch+1:3d}/{epochs} "
                         f"Batch: {batch_idx+1:4d}/{num_batches+1}  [{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
                         f"LR: {scheduler.get_last_lr()[0]:.07f} "
-                        f"Loss: {final_loss.item():.06f}"
+                        f"Loss: {final_loss.item():09.06f} "
+                        f"Elapsed: {time.time()-start:8.02f}s "
                         )
                 print(label, end="\r")
-            print("\n")
+            datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+            print(label, datetime, end="\n")
             self.save(epoch)
             if self.valid:
                 # Validation
@@ -111,6 +114,7 @@ class Trainer:
                     gloss = 0
                     iter = 0
                     num_batches = len(valid_loader)
+                    start = time.time()
                     for batch_idx, batch_data in enumerate(valid_loader):
                         if batch_data is None: continue
 
@@ -134,10 +138,12 @@ class Trainer:
                         label = (
                                 f"Epoch {epoch+1:3d}/{epochs} Valitadion: "
                                 f"[{100*(batch_idx/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                                f"Loss: {loss:.06f}"
+                                f"Loss: {loss:.06f} "
+                                f"Elapsed: {time.time()-start:8.02f}s "
                                 )
                         print(label, end="\r")
-                    print("\n")
+                    datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                    print(label, datetime, end="\n")
                 avg_valid_loss = gloss / iter
                 self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
 

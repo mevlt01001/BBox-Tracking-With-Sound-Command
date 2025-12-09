@@ -15,20 +15,23 @@ class AudioCNNFeats(nn.Module):
         super().__init__()
         
         k1 = max(n_mels, 256)
-        k2 = out_channel
+        k2 = max(k1, 256)
 
         self.audio_feature_extractor = nn.Sequential(
-            nn.Conv1d(in_channels=n_mels, out_channels=k1, kernel_size=5, stride=1),
+            nn.Conv1d(in_channels=n_mels, out_channels=k1, kernel_size=13, stride=3),
             nn.GroupNorm(1,k1),
             nn.SiLU(),
-            nn.Conv1d(in_channels=k1, out_channels=k2, kernel_size=5, stride=2),
+            nn.Conv1d(in_channels=k1, out_channels=k2, kernel_size=7, stride=3),
             nn.GroupNorm(1, k2),
+            nn.SiLU(),
+            nn.Conv1d(in_channels=k1, out_channels=out_channel, kernel_size=3, stride=1),
+            nn.GroupNorm(1, out_channel),
             nn.SiLU(),
         )
 
         self.mel_spectrogram = MelSpectrogram(
             sr=sr,
-            n_fft=2048,
+            n_fft=1024,
             n_mels=n_mels,
             hop_length=512,
             center=True,
@@ -37,8 +40,8 @@ class AudioCNNFeats(nn.Module):
 
     def forward(self, x):
         # X.shape = (B, 1, 459000)
-        x = self.mel_spectrogram.forward(x)
-        x = self.audio_feature_extractor(x)
+        x = self.mel_spectrogram.forward(x) # X.shape = (B, n_mels, time)
+        x = self.audio_feature_extractor(x) # X.shape = (B, embeddim, time)
         x = x.permute(0, 2, 1)
         # x.shape = (B, 128, embeddim)
         return x
