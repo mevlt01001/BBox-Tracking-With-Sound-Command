@@ -136,9 +136,11 @@ class Trainer:
                                 f"Loss: {loss:.06f}"
                                 )
                         print(label, end="\r")
+                    print("\n")
                 avg_valid_loss = gloss / iter
                 self.writer.add_scalar('Loss/Validation_Epoch', avg_valid_loss, epoch)
-            print("\n")
+            else: 
+                print("\n")
 
         self.model.train(False)
         return self.model
