@@ -136,6 +136,7 @@ class Model(nn.Module):
             valid_ratio = kwargs.get("valid_ratio")
             valid = kwargs.get("valid")
             lr = kwargs.get("lr")
+            min_lr = kwargs.get("min_lr")
             log_dir = kwargs.get("log_dir", "runs/sound_control")
 
             trainer = Trainer(
@@ -148,7 +149,7 @@ class Model(nn.Module):
                 valid=valid, 
                 log_dir=log_dir)
             
-            self = trainer.train(epochs, batch_size, lr)
+            self = trainer.train(epochs, batch_size, lr, min_lr)
         else:
             return super().train(mode)
 

@@ -33,7 +33,7 @@ class Trainer:
         self.valid_labels = self.labels[:int(len(self.labels)*valid_ratio)]
         self.train_labels = self.labels[int(len(self.labels)*valid_ratio):]
 
-    def train(self, epochs:int, batch_size:int=16, lr:float=0.01):
+    def train(self, epochs:int, batch_size:int=16, lr:float=0.01, min_lr:float=1e-5):
 
         train_ds = AudioVisualDataset(
             self.train_labels, 
@@ -57,7 +57,7 @@ class Trainer:
 
         criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
         optim = torch.optim.Adam(self.model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, len(train_loader), T_mult=2, eta_min=1e-5)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, len(train_loader), T_mult=2, eta_min=min_lr)
         scaler = GradScaler()
         self.model.train(True)
 
