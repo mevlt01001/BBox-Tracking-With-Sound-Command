@@ -175,7 +175,7 @@ def collate_fn(batch):
     frames, audios, bboxes, targets, masks = zip(*batch)
     
     return (
-        torch.cat(frames, dim=0),
+        torch.cat(frames, dim=0)/255.0,
         torch.cat(audios, dim=0),
         torch.cat(bboxes, dim=0),
         torch.cat(targets, dim=0),
@@ -188,6 +188,7 @@ class AudioVisualDataset(Dataset):
         self.labels_dir = labels_dir
         self.images_dir = images_dir
         self.audios_dir = audios_dir
+        self.model = model_config
         
         self.imgsz = model_config.imgsz
         self.sr = model_config.sr
@@ -228,7 +229,7 @@ class AudioVisualDataset(Dataset):
                 resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=self.sr)
                 audio = resampler(audio)
                 sr = self.sr
-
+            self.model.Audio
             padding = wave_lenght - audio.shape[1]
             if padding > 0:
                 audio = torch.nn.functional.pad(audio, (0, padding))
@@ -244,7 +245,7 @@ class AudioVisualDataset(Dataset):
             for i in range(len(bboxes)):
                 bbox_mask[i] = False
 
-            bboxes = torch.Tensor(bboxes).float()[:, :4]
+            bboxes = torch.Tensor(bboxes).float()[:, :4]/self.imgsz
             num_bbox = self.bbox_size
             padding = num_bbox - bboxes.shape[0]
             if padding > 0:
@@ -253,5 +254,5 @@ class AudioVisualDataset(Dataset):
                 bboxes = bboxes[:num_bbox]
 
             return frame, audio, bboxes.unsqueeze(0), selecting_bbox.unsqueeze(0), bbox_mask.unsqueeze(0)
-        except Exception as e:
+        except Exception:
             return None

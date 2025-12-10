@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from torchvision.models import resnet
-from nnAudio.features import MelSpectrogram
+from torchaudio.transforms import MelSpectrogram
+from torchaudio.transforms import AmplitudeToDB
 
 class AudioCNNFeats(nn.Module):
     """
@@ -19,31 +20,35 @@ class AudioCNNFeats(nn.Module):
 
         self.audio_feature_extractor = nn.Sequential(
             nn.Conv1d(in_channels=n_mels, out_channels=k1, kernel_size=13, stride=3),
-            nn.GroupNorm(1,k1),
+            nn.BatchNorm1d(k1),
             nn.SiLU(),
             nn.Conv1d(in_channels=k1, out_channels=k2, kernel_size=7, stride=3),
-            nn.GroupNorm(1, k2),
+            nn.BatchNorm1d(k2),
             nn.SiLU(),
             nn.Conv1d(in_channels=k1, out_channels=out_channel, kernel_size=3, stride=1),
-            nn.GroupNorm(1, out_channel),
+            nn.BatchNorm1d(out_channel),
             nn.SiLU(),
         )
 
         self.mel_spectrogram = MelSpectrogram(
-            sr=sr,
-            n_fft=2024,
+            sample_rate=sr,
             n_mels=n_mels,
+            n_fft=2048,
             hop_length=512,
             center=True,
-            verbose=False
+            normalized=True,
         )
+
+        self.amplitude_to_db = AmplitudeToDB(top_db=80.0)
 
     def forward(self, x):
         # X.shape = (B, 1, 459000)
-        x = self.mel_spectrogram.forward(x) # X.shape = (B, n_mels, time)
+        x = self.mel_spectrogram(x) # X.shape = (B, n_mels, time)
+        x = self.amplitude_to_db(x)
         x = self.audio_feature_extractor(x) # X.shape = (B, embeddim, time)
         x = x.permute(0, 2, 1)
         # x.shape = (B, 128, embeddim)
+        print(f"AudioCNNFeats.shape: {x.shape}")
         return x
     
 class ImageCNNEncoder(nn.Module):
@@ -74,6 +79,7 @@ class ImageCNNEncoder(nn.Module):
         x = self.cnn_encoder(x)
         x = x.flatten(-2, -1).permute(0, 2, 1)
         # x.shape = (B, 400, embeddim)
+        print(f"ImageCNNEncoder.shape: {x.shape}")
         return x
 
 class BboxCNNEncoder(nn.Module):
@@ -88,13 +94,12 @@ class BboxCNNEncoder(nn.Module):
         self.bbox_encoder = nn.Sequential(
             nn.Linear(in_features=4, out_features=64),
             nn.SiLU(),
-            nn.Linear(in_features=64, out_features=256),
-            nn.SiLU(),
-            nn.Linear(in_features=256, out_features=out_channel),
+            nn.Linear(in_features=64, out_features=out_channel),
             nn.SiLU()
         )
 
     def forward(self, x:torch.Tensor):
         # X.shape = (B, N, 4)
         x = self.bbox_encoder(x)
+        print(f"BboxCNNEncoder.shape: {x.shape}")
         return x
