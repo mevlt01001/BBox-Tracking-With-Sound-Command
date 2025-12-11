@@ -1,6 +1,34 @@
 import torch
 import torch.nn as nn
 
+class VisualGrounding(nn.Module):
+    """
+    VisualGrounding is used to align the visual features with the audio features.
+
+    This module uses Multi Head Self-Attention, Cross-Attention.\\
+    Select the moost relavent visual features according to the audio features.
+
+    `Encoder`: Firstly apply Multi Head Self-Attention to the audio features and visual features.\\
+    `Decoder`: Secondly apply Cross-Attention to the audio features and visual features as mmemory.\\
+    `Head`: Finally apply grid based sigmoid classification to the visual features.
+    """
+
+    def __init__(self, 
+                 embeddim:int, 
+                 audio_seq:int, 
+                 image_seq:int, 
+                 num_layers:int=4, 
+                 num_heads:int=4, 
+                 dropout:float=0.1, 
+                 mlp_ratio:float=2.0
+                 ):
+        super().__init__()
+
+        self.encoder = None # TODO:AudioImageEncoder
+        self.decoder = None # TODO:AudioImageDecoder
+        self.head = None # TODO:Head
+
+
 class AttnBlock(nn.Module):
     """Batch-first pre-normalized **Multi Head Attention** block.
 
@@ -103,12 +131,15 @@ class AudioImageDecoder(nn.Module):
 
         self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
         self.PE = nn.Parameter(torch.rand(image_seq, embeddim))
+        self.linear = nn.Linear(num_layers, 1)
 
     def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor):
         q = audio_data
         image_data = image_data + self.PE[None, :, :]
+        outs = []
         for layer in self.AttnBlocks:
-            q = layer(q, image_data, image_data)
+            outs.append(layer(q, image_data, image_data))
+        q = self.linear(torch.cat(outs, dim=0))
         return q
     
 class BboxContextDecoder(nn.Module):
