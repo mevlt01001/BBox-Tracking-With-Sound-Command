@@ -1,7 +1,7 @@
 import torch, os
 import torch.nn as nn
 from .feats import AudioCNNFeats, ImageCNNEncoder, BboxCNNEncoder
-from .ntransformers import AudioSeqEncoder, AudioImageDecoder, BboxContextDecoder
+from .ntransformers import AudioSeqEncoder, AudioImageDecoder, BboxContextDecoder, VisualGrounding
 from .trainer import Trainer
 
 class Model(nn.Module):
@@ -36,17 +36,20 @@ class Model(nn.Module):
         self.image_encoder = ImageCNNEncoder(embeddim) # Freezed
         for param in self.image_encoder.parameters():
             param.requires_grad = False
-        self.bbox_encoder = BboxCNNEncoder(embeddim)
         self.set_seqs()
 
-        self.audio_encoder = AudioSeqEncoder(embeddim, self.audio_seq, num_layers, num_heads, dropout, mlp_ratio)
-        self.audio_image_decoder = AudioImageDecoder(embeddim, self.image_seq, num_layers, num_heads, dropout, mlp_ratio)
-        self.bbox_image_decoder = BboxContextDecoder(embeddim, num_layers, num_heads, dropout, mlp_ratio)
+        self.visual_grounding = VisualGrounding(
+            imgsz=imgsz,
+            embeddim=embeddim,
+            audio_seq=self.audio_seq,
+            image_seq=self.image_seq,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            mlp_ratio=mlp_ratio
+        )
 
-        self.lineer1 = nn.Linear(embeddim, 1)
-
-
-    def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor, bbox_data:torch.Tensor, bbox_mask:torch.Tensor):
+    def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor, bbox_data:torch.Tensor, audio_mask:torch.Tensor):
         """
 
         Args:
@@ -59,33 +62,10 @@ class Model(nn.Module):
             selected_bboxes_idx (torch.Tensor): Selected bounding boxes idx shaped like [batch_size, S_B].
         """
 
-        #Audio_data.shape = [B, wave_data]
-        #Image_data.shape = [B, 3, 640, 640]
-        #Bbox_data.shape = [B, S_B, 4]
-        #Bbox_mask.shape = [B, S_B]
-
-        audio_data = self.audio_cnn_feats(audio_data) # Audio_data.shape = [B, S_A, embeddim]
-        image_data = self.image_encoder(image_data)   # Image_data.shape = [B, S_I, embeddim]
-        bbox_data = self.bbox_encoder(bbox_data)      # Bbox_data.shape  = [B, S_B, embeddim]
-
-        audio_data = self.audio_encoder(audio_data)
-        audio_image_data = self.audio_image_decoder(audio_data, image_data) 
-        audio_image_bbox_data = self.bbox_image_decoder(bbox_data, audio_image_data)
-
-        # Audio_data.shape = [B, S_A, embeddim]
-        # audio_image_data.shape = [B, S_A, embeddim]
-        # audio_image_bbox_data.shape = [B, S_B, embeddim]
-
-        selected_bboxes_idx = self.lineer1(audio_image_bbox_data).squeeze(-1)
-        # selected_bboxes_idx.shape = [B, S_B]
-
-        bbox_logits = selected_bboxes_idx.masked_fill(bbox_mask, float('-inf'))
-        # selected_bboxes_idx.shape = [B, S_B]
-        if self.training:
-            return bbox_logits
-
-        probs = torch.sigmoid(bbox_logits)
-
+        audio_feats = self.audio_cnn_feats.forward(audio_data)
+        image_feats = self.image_encoder.forward(image_data)
+        out = self.visual_grounding.forward(audio_feats, image_feats, audio_mask)
+        probs = self.visual_grounding.head(out)
         return probs
     
     @torch.no_grad()

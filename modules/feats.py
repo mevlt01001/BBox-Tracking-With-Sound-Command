@@ -51,6 +51,10 @@ class AudioCNNFeats(nn.Module):
         print(f"AudioCNNFeats.shape: {x.shape}")
         return x
     
+    @torch.no_grad()
+    def crate_mask(self, ):
+        pass
+    
 class ImageCNNEncoder(nn.Module):
     """
     Image Feature Extractor with ResNet18. This extractor is pretrained on ImageNet.

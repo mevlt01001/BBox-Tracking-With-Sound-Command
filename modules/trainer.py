@@ -193,7 +193,6 @@ class AudioVisualDataset(Dataset):
         self.imgsz = model_config.imgsz
         self.sr = model_config.sr
         self.max_seconds = model_config.max_seconds
-        self.bbox_size = model_config.bbox_size
 
     def __len__(self):
         return len(self.file_list)
@@ -230,29 +229,8 @@ class AudioVisualDataset(Dataset):
                 audio = resampler(audio)
                 sr = self.sr
             self.model.Audio
-            padding = wave_lenght - audio.shape[1]
-            if padding > 0:
-                audio = torch.nn.functional.pad(audio, (0, padding))
-            else:
-                audio = audio[:, :wave_lenght]
 
-
-            selecting_bbox = torch.zeros((self.bbox_size)).bool()
-            for idx in selected_box_idx:
-                selecting_bbox[idx] = True
-
-            bbox_mask = torch.ones((self.bbox_size)).bool()
-            for i in range(len(bboxes)):
-                bbox_mask[i] = False
-
-            bboxes = torch.Tensor(bboxes).float()[:, :4]/self.imgsz
-            num_bbox = self.bbox_size
-            padding = num_bbox - bboxes.shape[0]
-            if padding > 0:
-                bboxes = torch.nn.functional.pad(bboxes, (0, 0, 0, padding))
-            else:
-                bboxes = bboxes[:num_bbox]
-
-            return frame, audio, bboxes.unsqueeze(0), selecting_bbox.unsqueeze(0), bbox_mask.unsqueeze(0)
+            # TODO: Continue to Audio padding mask and target_creation.
+            
         except Exception:
             return None
