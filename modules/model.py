@@ -1,7 +1,7 @@
 import torch, os
 import torch.nn as nn
 from .feats import AudioCNNFeats, ImageCNNEncoder, BboxCNNEncoder
-from .ntransformers import AudioSeqEncoder, AudioImageDecoder, BboxContextDecoder, VisualGrounding
+from .ntransformers import VisualGrounding
 from .trainer import Trainer
 
 class Model(nn.Module):

@@ -33,7 +33,8 @@ class VisualGrounding(nn.Module):
                  num_layers:int=4, 
                  num_heads:int=4, 
                  dropout:float=0.1, 
-                 mlp_ratio:float=2.0
+                 mlp_ratio:float=2.0,
+                 device:torch.device=torch.device('cpu')
                  ):
         super().__init__()
 
@@ -42,26 +43,32 @@ class VisualGrounding(nn.Module):
             num_heads=num_heads,
             num_layers=num_layers,
             dropout=dropout,
-            mlp_ratio=mlp_ratio
+            mlp_ratio=mlp_ratio,
+            device=device
         )
-        self.decoder = AudioEncoder(
+        self.decoder = ImageDecoder(
             embeddim=embeddim,
             num_heads=num_heads,
             num_layers=num_layers,
             dropout=dropout,
-            mlp_ratio=mlp_ratio
+            mlp_ratio=mlp_ratio,
+            device=device
         )
         self.head = Head(
             imgsz=imgsz,
-            embeddim=embeddim
+            seqnum=image_seq,
+            embeddim=embeddim,
+            device=device
         )
 
-        self.image_PE = nn.Parameter(torch.rand(image_seq, embeddim)*0.2)
-        self.audio_PE = nn.Parameter(torch.rand(audio_seq, embeddim)*0.2)
+        self.image_PE = nn.Parameter(torch.randn(image_seq, embeddim)*0.1).to(device)
+        self.audio_PE = nn.Parameter(torch.randn(audio_seq, embeddim)*0.1).to(device)
     
-    def forward(self, audio_data:Tensor, image_data:Tensor, audio_mask:Tensor):
-        audio_data = self.encoder(audio_data, audio_mask)
-        image_data = self.decoder(image_data, audio_data)
+    def forward(self, audio_data:Tensor, image_data:Tensor, audio_mask:Optional[Tensor]=None):
+        audio_data = self.encoder(audio_data+self.audio_PE, audio_mask)
+        image_data = self.decoder(image_data+self.image_PE, audio_data)
+
+        return self.head(image_data)
         
 
 class AudioEncoder(nn.Module):
@@ -84,7 +91,8 @@ class AudioEncoder(nn.Module):
                  num_heads:int=8,
                  num_layers:int=4,
                  dropout:float=0.1,
-                 mlp_ratio:float=4.0):
+                 mlp_ratio:float=4.0,
+                 device:torch.device=torch.device('cpu')):
         super().__init__()
 
         self.dim = embeddim
@@ -101,7 +109,7 @@ class AudioEncoder(nn.Module):
                 "dropout": nn.Dropout(self.dropout)})
                 for _ in range(self.num_layers)
             ] 
-        )
+        ).to(device)
         """Multi Head Self-Attention Blocks"""
 
         self.linear_blocks = nn.ModuleList([
@@ -113,9 +121,9 @@ class AudioEncoder(nn.Module):
                 nn.Linear(int(self.dim * self.mlp_ratio), self.dim),
                 nn.Dropout(self.dropout))
             for _ in range(num_layers)
-        ])
+        ]).to(device)
 
-    def forward(self, audio_data:Tensor, key_padding_mask:Tensor):
+    def forward(self, audio_data:Tensor, key_padding_mask:Optional[Tensor]=None):
         x = audio_data
         for sa, linear in zip(self.sa_blocks, self.linear_blocks):
             lnx = sa["ln"](x)
@@ -144,7 +152,8 @@ class ImageDecoder(nn.Module):
                  num_heads:int=8,
                  num_layers:int=4,
                  dropout:float=0.1,
-                 mlp_ratio:float=4.0):
+                 mlp_ratio:float=4.0,
+                 device:torch.device=torch.device('cpu')):
         super().__init__()
 
         self.dim = embeddim
@@ -161,7 +170,7 @@ class ImageDecoder(nn.Module):
                 "dropout": nn.Dropout(self.dropout)})
                 for _ in range(self.num_layers)
             ] 
-        )
+        ).to(device)
         """Multi Head Self-Attention Blocks"""
 
         self.ca_blocks = nn.ModuleList(
@@ -172,7 +181,7 @@ class ImageDecoder(nn.Module):
                 "dropout": nn.Dropout(self.dropout)})
                 for _ in range(self.num_layers)
             ] 
-        )
+        ).to(device)
         """Multi Head Cross-Attention Blocks"""
 
         self.linear_blocks = nn.ModuleList([
@@ -184,7 +193,7 @@ class ImageDecoder(nn.Module):
                 nn.Linear(int(self.dim * self.mlp_ratio), self.dim),
                 nn.Dropout(self.dropout))
             for _ in range(num_layers)
-        ])
+        ]).to(device)
 
     def forward(self, image_data:Tensor, audio_data:Tensor):
         x = image_data
@@ -205,114 +214,35 @@ class Head(nn.Module):
     """Grid Based Classification Head"""
     def __init__(self, 
                  imgsz:int,
-                 embeddim:int):
+                 seqnum:int,
+                 embeddim:int,
+                 device:torch.device=torch.device('cpu')):
         super().__init__()
 
         self.imgsz = imgsz
         self.embeddim = embeddim
-        self.linear = nn.Linear(embeddim, 1)
+        self.linear = nn.Linear(embeddim, 1).to(device)
+        self.stride = self.imgsz // seqnum**(1/2)
+        self.gs = self.imgsz // self.stride
+        self.device = device
 
-    def forward(self, image_data:Tensor, threshold:float=0.5):
-        # image_data.shape = [B, 400, embeddim]
-        image_data = self.linear(image_data)
+        ix, iy = torch.meshgrid(
+            torch.arange(self.gs), 
+            torch.arange(self.gs),
+            indexing="xy")
+        
+        ix = ix.flatten(0)
+        iy = iy.flatten(0)
+        self.coords = torch.stack([ix, iy], dim=-1).to(self.device) # [SEQ, 2]
+
+    def forward(self, image_data:Tensor, threshold:float=0.3):
+
+        image_data = self.linear(image_data).squeeze(-1)
         if self.training:
             return image_data
+        
         pixel_data = torch.sigmoid(image_data)
-        pixel_data = (pixel_data > threshold)
-        return pixel_data
+        selected_idx = (pixel_data > threshold) # [B, SEQ] bool
 
+        return self.coords, pixel_data, selected_idx
 
-
-
-    
-class AudioSeqEncoder(nn.Module):
-    """Audio Sequence Encoder
-
-    Process audio data shaped like [batch_size, seqnum, embeddim], after AudioCNNFeats.\\
-    Uses Multi Head Self-Attention.
-
-    Args:
-        seqnum (int): Sequence number
-        embeddim (int): Embedding dimension
-        num_layers (int, optional): Number of layers. Defaults to 4.
-        num_heads (int, optional): Number of heads. Defaults to 4.
-        dropout (float, optional): Defaults to 0.1.
-        mlp_ratio (float, optional): Feed forward projection ratio. Defaults to 2.0.
-    """
-    def __init__(self, 
-                 embeddim:int,
-                 audio_seq:int,
-                 num_layers:int=4, 
-                 num_heads:int=4, 
-                 dropout:float=0.1, 
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-        self.PE = nn.Parameter(torch.rand(audio_seq, embeddim))
-
-    def forward(self, audio_data:torch.Tensor):
-        q = audio_data + self.PE[None, :, :]
-        for layer in self.AttnBlocks:
-            q = layer(q, q, q)
-        return q
-    
-class AudioImageDecoder(nn.Module):
-    """
-    This modules takes `AudioSeqEncoder`'s output as Query, `ImageCNNEncoder`'s output as Key and Value.\\
-    Learns to relationship between audio and image. 
-    Args:
-        embeddim (int): Embedding dimension
-        num_layers (int, optional): Number of layers. Defaults to 4.
-        num_heads (int, optional): Number of heads. Defaults to 4.
-        dropout (float, optional): Defaults to 0.1.
-        mlp_ratio (float, optional): Feed forward projection ratio. Defaults to 2.0.
-    """
-    def __init__(self,
-                 embeddim:int,
-                 image_seq:int,
-                 num_layers:int=4,
-                 num_heads:int=4,
-                 dropout:float=0.1,
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-        self.PE = nn.Parameter(torch.rand(image_seq, embeddim))
-        self.linear = nn.Linear(num_layers, 1)
-
-    def forward(self, audio_data:torch.Tensor, image_data:torch.Tensor):
-        q = audio_data
-        image_data = image_data + self.PE[None, :, :]
-        outs = []
-        for layer in self.AttnBlocks:
-            outs.append(layer(q, image_data, image_data))
-        q = self.linear(torch.cat(outs, dim=0))
-        return q
-    
-class BboxContextDecoder(nn.Module):
-    """
-    This modules takes `BboxCNNEncoder`'s output as Query, `AudioImageDecoder`'s output as Key and Value.\\
-    Aimed to learn relationship between bbox and image-audio. 
-    Args:
-        embeddim (int): Embedding dimension
-        num_layers (int, optional): Number of layers. Defaults to 4.
-        num_heads (int, optional): Number of heads. Defaults to 4.
-        dropout (float, optional): Defaults to 0.1.
-        mlp_ratio (float, optional): Feed forward projection ratio. Defaults to 2.0.
-    """
-    def __init__(self,
-                 embeddim:int,
-                 num_layers:int=4,
-                 num_heads:int=4,
-                 dropout:float=0.1,
-                 mlp_ratio:float=2.0):
-        super().__init__()
-
-        self.AttnBlocks = nn.ModuleList([AttnBlock(embeddim, num_heads, dropout, mlp_ratio) for _ in range(num_layers)])
-
-    def forward(self, bbox_data:torch.Tensor, image_data:torch.Tensor):
-        q = bbox_data
-        for layer in self.AttnBlocks:
-            q = layer(q, image_data, image_data)
-        return q

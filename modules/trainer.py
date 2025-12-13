@@ -210,7 +210,7 @@ class AudioVisualDataset(Dataset):
             bboxes = data["bboxes"]
             if len(bboxes) == 0:
                 return None
-            selected_box_idx = data["selected_box_idx"]
+            selected_bboxes = data["selected_box_idx"]
 
             frame_path = os.path.join(self.images_dir, frame_name)
             audio_path = os.path.join(self.audios_dir, audio_file)
