@@ -1,0 +1,14 @@
+*demo*
+*.ipynb
+*.pt
+*.onnx
+*.engine
+*.jpeg
+*.jpg
+*.png
+*.webp
+*.wav
+*.mp3
+*.mp4
+*__pycache__*
+.*
