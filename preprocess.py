@@ -28,9 +28,6 @@ def preproecss(audio:Tensor, sr:int, target_sr:int=16000):
     audio = resampler.forward(audio)
     return audio
 
-def patcher(x):
-    pass
-
 class Preprocess(nn.Module):
     def __init__(self, 
                  sr:int=16000,
@@ -84,20 +81,3 @@ class Preprocess(nn.Module):
         x = x.transpose(1,2)                                # [B, Seq, embeddim]
 
         return x
-
-file_list = [
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/11599.wav",
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/11354.wav",
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/10653.wav",
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/00653.wav",
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/02053.wav",
-    "/home/neuron/workspace/sound_control/dataset_CLR_GEO/augmented_audios/02833.wav",
-]
-data = load_audios(file_list, target_sr=16000, max_seconds=10)
-
-
-import matplotlib.pyplot as plt
-
-mdl = Preprocess(sr=16000, win_length_second=0.025, stride_second=0.010, embeddim=512, device="cpu")
-data = mdl.forward(data)
-print(data.shape)
