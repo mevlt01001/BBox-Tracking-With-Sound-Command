@@ -1,0 +1,129 @@
+import torch
+import torchaudio
+import torch.nn as nn
+from torch import Tensor
+from preprocess import Preprocess
+
+class Model(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # TODO: Preprocess
+        # TODO: AudioEncoder
+        # TODO: Head
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
+
+class AudioEncoder(nn.Module):
+    """Audio Sequence Encoder
+
+    This is a basic Pre-Norm Multi Head Self-Attention Encoder.\\
+    Process audio data shaped like [batch_size, seqnum, embeddim], with CLS Token.\\
+    CLS Token Learns the relation between audio features due to self-attention mechanism.
+
+    Args:
+        seqnum (int): Sequence number
+        embeddim (int): Embedding dimension
+        num_layers (int): Number of layers. Defaults to 4.
+        num_heads (int): Number of heads. Defaults to 4.
+        dropout (float): Defaults to 0.1.
+        mlp_ratio (float): Feed forward projection ratio. Defaults to 2.0.
+        patch_size (int): Patch size. Defaults to 16 accorting to Audio Spectrogram Transformer.
+        patch_stride (int): Patch stride. Defaults to 10 accorting to Audio Spectrogram Transformer.
+        melSeqNum (int): Mel Spectrogram Sequence Number. Defaults to 1000. Obtained from Preprocess.
+        nmels (int): Number of Mel Bands. Defaults to 128. Obtained from Preprocess.
+    """
+    def __init__(self, 
+                 embeddim:int,
+                 num_heads:int=8,
+                 num_layers:int=4,
+                 dropout:float=0.1,
+                 mlp_ratio:float=4.0,
+                 patch_size:int=16,
+                 patch_stride:int=10,
+                 melSeqNum:int=1000,
+                 nmels:int=128,
+                 device:torch.device=torch.device('cpu')):
+        super().__init__()
+
+        self.dim = embeddim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.mlp_ratio = mlp_ratio
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride
+        self.num_mel_seq = melSeqNum
+        self.nmels = nmels
+        self.device = device
+
+        self.sa_blocks = nn.ModuleList(
+            [
+            nn.ModuleDict({
+                "ln": nn.LayerNorm(embeddim),
+                "mha": nn.MultiheadAttention(self.dim, self.num_heads, self.dropout, batch_first=True),
+                "dropout": nn.Dropout(self.dropout)})
+                for _ in range(self.num_layers)
+            ] 
+        ).to(device)
+        """Multi Head Self-Attention Blocks"""
+
+        self.linear_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.LayerNorm(self.dim),
+                nn.Linear(self.dim, int(self.dim * self.mlp_ratio)),
+                nn.SiLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(int(self.dim * self.mlp_ratio), self.dim),
+                nn.Dropout(self.dropout))
+            for _ in range(num_layers)
+        ]).to(device)
+
+        self.proj = nn.Conv2d(
+            in_channels=1,
+            out_channels=self.dim,
+            stride=self.patch_stride,
+            kernel_size=self.patch_size,
+            bias=False
+        ).to(device)
+
+        self.set_seq()  
+        self.CLS_TOKEN = nn.Parameter(torch.rand(1, 1, self.dim)*0.1).to(device)
+        self.PE = nn.Parameter(torch.rand(1,self.num_seq+1, self.dim)).to(device)
+
+    def forward(self, mel_spec_data:Tensor):
+        # x.shape = (# [B, n_mels, 1000]
+        B, *_ = mel_spec_data.shape
+        CLS_TOKEN = self.CLS_TOKEN.repeat(B, 1, 1)     # [B, 1, dim]
+
+        x = self.proj(mel_spec_data)                   # [B, dim, y_patchs, x_patchs]
+        x = torch.flatten(x, start_dim=2, end_dim=-1)  # [B, dim, Seq]
+        x = x.transpose(1,2)                           # [B, Seq, dim]
+        x = torch.cat([CLS_TOKEN, x], dim=1) + self.PE      # [B, 1+Seq, dim]
+
+        for sa, linear in zip(self.sa_blocks, self.linear_blocks):
+            res = x
+            lnx = sa["ln"](x)
+            x = sa["mha"](lnx, lnx, lnx)[0]
+            x = res + sa["dropout"](x)
+            x = x + linear(x)
+        return x
+    
+    @torch.no_grad()
+    def set_seq(self):
+        dummy = torch.rand(1,1,self.nmels,self.num_mel_seq, device=self.device)
+        x = self.proj(dummy)                                # [B, dim, y_patchs, x_patchs]
+        x = torch.flatten(x, start_dim=2, end_dim=-1)       # [B, dim, Seq]
+        x = x.transpose(1,2)                                # [B, Seq, dim]
+        self.num_seq = x.shape[1]
+        del dummy, x
+
+device = "cuda"
+data = torch.rand(10,160000, device=device)
+prep = Preprocess(device=device)
+mdl = AudioEncoder(num_heads=4, num_layers=3, embeddim=512, melSeqNum=prep.num_mel_seq, nmels=prep.n_mels, device=device)
+out = prep.forward(data)
+out = mdl.forward(out)
+
+print(out.shape)

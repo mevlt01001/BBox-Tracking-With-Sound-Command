@@ -37,9 +37,12 @@ class Preprocess(nn.Module):
                  embeddim:int=768,
                  patch_size:int=16,
                  patch_stride:int=10,
-                 device:torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+                 max_second:int=10,
+                 device:torch.device = torch.device('cpu'),
                  ):
         super().__init__()
+        self.device = device
+        self.max_seconds = max_second
 
         self.sr = sr                                # 16KHz for AST (Audio Spectrogram Transformer)
         self.win_length_second = win_length_second  # 25ms for AST (Audio Spectrogram Transformer)
@@ -63,21 +66,28 @@ class Preprocess(nn.Module):
         ).to(device)
 
         self.amplitude_to_db = torchaudio.transforms.AmplitudeToDB("power", top_db=80).to(device)
+        self.set_seq() # self.out.shape = [B,1,N_MELS,SEQ]
 
-        self.proj = nn.Conv2d(
-            in_channels=1,
-            out_channels=self.embeddim,
-            stride=self.patch_stride,
-            kernel_size=self.patch_size,
-            bias=False
-        ).to(device)
-
+    @torch.no_grad()
     def forward(self, x:Tensor):
-        # x.shape = (B, 1, self.max_seconds*self.sr)
-        x = self.mel_spectrogram.forward(x).unsqueeze(1)    # [B, n_mels, 1000]
-        x = self.amplitude_to_db.forward(x)                 # [B, n_mels, 1000]
-        x = self.proj(x)                                    # [B, embeddim, y_patchs, x_patchs]
-        x = torch.flatten(x, start_dim=2, end_dim=-1)       # [B, embeddim, Seq]
-        x = x.transpose(1,2)                                # [B, Seq, embeddim]
-
+        # x.shape = (B, self.max_seconds*self.sr)
+        x = self.mel_spectrogram.forward(x).unsqueeze(1)    # [B, 1, n_mels, 1000]
+        x = self.amplitude_to_db.forward(x)                 # [B, 1, n_mels, 1000]
         return x
+    
+    @torch.no_grad()
+    def set_seq(self):
+        dummy = torch.rand(1,self.max_seconds*self.sr, device=self.device)
+        out = self.forward(dummy)
+        self.num_mel_seq = out.shape[-1]
+        del dummy, out
+
+        
+
+# audios = load_audios(path=["dataset_CLR_GEO/audios/00003.wav"]*10, target_sr=16000, max_seconds=10)
+
+# print(audios.shape)
+
+# mdl = Preprocess()
+# # x = mdl(audios)
+# print(mdl.out_shape)
