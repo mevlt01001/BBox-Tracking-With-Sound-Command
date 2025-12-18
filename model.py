@@ -2,18 +2,132 @@ import torch
 import torchaudio
 import torch.nn as nn
 from torch import Tensor
-from preprocess import Preprocess
+from .preprocess import Preprocess
+from .trainer import Trainer
 
 class Model(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self,
+                 sr,
+                 win_length_second,
+                 stride_second,
+                 n_mels,
+                 embeddim,
+                 patch_size,
+                 patch_stride,
+                 max_second,
+                 num_heads,
+                 num_layers,
+                 dropout,
+                 mlp_ratio,
+                 device=torch.device('cpu'),
+                 ):
+        super().__init__()
+
+        self.sr = sr
+        self.win_length_second = win_length_second
+        self.stride_second = stride_second
+        self.n_mels = n_mels
+        self.embeddim = embeddim
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride
+        self.max_second = max_second
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.mlp_ratio = mlp_ratio
+        self.device = device
         
         # TODO: Preprocess
+        self.preprocess = Preprocess(
+            self.sr,
+            self.win_length_second,
+            self.stride_second,
+            self.n_mels,
+            self.embeddim,
+            self.patch_size,
+            self.patch_stride,
+            self.max_second,
+            device=self.device
+        )
         # TODO: AudioEncoder
+        self.encoder = AudioEncoder(
+            self.embeddim,
+            self.num_heads,
+            self.num_layers,
+            self.dropout,
+            self.mlp_ratio,
+            self.patch_size,
+            self.patch_stride,
+            self.preprocess.num_mel_seq,
+            self.n_mels,
+            device=self.device
+        )
         # TODO: Head
+        self.color_linear = nn.Linear(self.embeddim, 4).to(self.device)
+        self.geo_linear = nn.Linear(self.embeddim, 4).to(self.device)
 
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError
+    def forward(self, x:Tensor):
+        x = self.preprocess(x)
+        x = self.encoder(x)
+        clr = self.color_linear(x)
+        geo = self.geo_linear(x)
+        return clr, geo
+    
+    def train(self, mode=True,**kwargs):
+        """Set the module in training mode or train a model.
+
+        To train please provide the following kwargs:
+        - images_path (str)
+        - audios_path (str)
+        - labels_path (str)
+        - epochs (int)
+        - batch_size (int)
+        - lr (float)
+
+        This has an effect only on certain modules. See the documentation of
+        particular modules for details of their behaviors in training/evaluation
+        mode, i.e., whether they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        etc.
+
+        Args:
+            mode (bool): whether to set training mode (``True``) or evaluation mode (``False``). Default: ``True``.
+            images_path (str): the path of images.
+            audios_path (str): the path of audios.
+            labels_path (str): the path of labels.
+            epochs (int): number of epochs
+            batch_size (int): batch size
+            lr (float): learning rate
+
+        Returns:
+            Module: self
+        """
+        if "labels_dir" and "epochs" in kwargs:
+
+            labels_dir = kwargs.get("labels_dir")
+            epochs = kwargs.get("epochs")
+            valid = kwargs.get("valid", True)
+            batch_size = kwargs.get("batch_size", 12)
+            valid_ratio = kwargs.get("valid_ratio", 0.2)
+            lr = kwargs.get("lr", 0.001)
+            min_lr = kwargs.get("min_lr", 0.0001)
+            log_dir = kwargs.get("log_dir", "runs/sound_control")
+
+            trainer = Trainer(
+                model=self,
+                labels_dir=labels_dir,
+                batch_size=batch_size,
+                lr=lr,
+                min_lr=min_lr,
+                epochs=epochs,
+                test_ratio=valid_ratio,
+                valid=valid,
+                log_dir=log_dir,
+                device=self.device
+            )
+            
+            self = trainer.train()
+        else:
+            return super().train(mode)
 
 class AudioEncoder(nn.Module):
     """Audio Sequence Encoder
@@ -108,7 +222,7 @@ class AudioEncoder(nn.Module):
             x = sa["mha"](lnx, lnx, lnx)[0]
             x = res + sa["dropout"](x)
             x = x + linear(x)
-        return x
+        return x[:, 0]
     
     @torch.no_grad()
     def set_seq(self):
@@ -119,11 +233,39 @@ class AudioEncoder(nn.Module):
         self.num_seq = x.shape[1]
         del dummy, x
 
-device = "cuda"
-data = torch.rand(10,160000, device=device)
-prep = Preprocess(device=device)
-mdl = AudioEncoder(num_heads=4, num_layers=3, embeddim=512, melSeqNum=prep.num_mel_seq, nmels=prep.n_mels, device=device)
-out = prep.forward(data)
-out = mdl.forward(out)
+sr = 16000
+win_length_second = 0.025
+stride_second = 0.01
+n_mels = 128
+embeddim = 768
+patch_size = 16
+patch_stride = 10
+max_second = 10
+num_heads = 2
+num_layers = 2
+dropout = 0.1
+mlp_ratio = 4.0
+device = torch.device('cuda')
 
-print(out.shape)
+mdl = Model(
+    sr,
+    win_length_second,
+    stride_second,
+    n_mels,
+    embeddim,
+    patch_size,
+    patch_stride,
+    max_second,
+    num_heads,
+    num_layers,
+    dropout,
+    mlp_ratio,
+    device=device,
+)
+
+# data = load_audios(path=["dataset_CLR_GEO/augmented_audios/11609.wav"]*10, target_sr=16000, max_seconds=10)
+# print(data.shape)
+
+# out1, out2 = mdl(data.to(device))
+# print(out1.shape)
+# print(out2.shape)

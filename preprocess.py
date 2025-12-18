@@ -81,13 +81,3 @@ class Preprocess(nn.Module):
         out = self.forward(dummy)
         self.num_mel_seq = out.shape[-1]
         del dummy, out
-
-        
-
-# audios = load_audios(path=["dataset_CLR_GEO/audios/00003.wav"]*10, target_sr=16000, max_seconds=10)
-
-# print(audios.shape)
-
-# mdl = Preprocess()
-# # x = mdl(audios)
-# print(mdl.out_shape)
