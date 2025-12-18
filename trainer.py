@@ -5,16 +5,17 @@ import time
 import torch
 import torch.nn as nn
 from torch import Tensor
-from .model import Model
+# deleted due to circular import
 from .preprocess import load_audios
-from torch.amp import GradScaler, autocast
+# from torch.amp import GradScaler, autocast
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 class Trainer:
     def __init__(self,
-                 model:Model,
+                 model,
                  labels_dir:os.PathLike, 
+                 audios_dir:os.PathLike,
                  batch_size:int=16, 
                  lr:float=0.01, 
                  min_lr:float=1e-5, 
@@ -29,25 +30,26 @@ class Trainer:
         self.lr = lr
         self.min_lr = min_lr
         self.epochs = epochs
-        self.labels_dir = labels_dir    
+        self.labels_dir = labels_dir
+        self.audios_dir = audios_dir
         self.log_dir = log_dir
         self.labels = os.listdir(labels_dir)
         self.valid = valid
         self.valid_labels = self.labels[:int(len(self.labels)*test_ratio)]
         self.train_labels = self.labels[int(len(self.labels)*test_ratio):]
 
-        self.train_ds = AudioDataset(labels_dir=self.labels_dir, file_list=self.train_labels)
-        self.valid_ds = AudioDataset(labels_dir=self.labels_dir, file_list=self.valid_labels)
-        self.collate_fn = Collator(target_sr=16000, max_seconds=10)
+        self.train_ds = AudioDataset(labels_dir=self.labels_dir, file_list=self.train_labels, audios_dir=self.audios_dir)
+        self.valid_ds = AudioDataset(labels_dir=self.labels_dir, file_list=self.valid_labels, audios_dir=self.audios_dir)
+        self.collate_fn = Collator(target_sr=self.model.sr, max_seconds=self.model.max_second)
 
         self.train_loader = DataLoader(
             self.train_ds, batch_size=batch_size, shuffle=True, 
-            num_workers=8, pin_memory=True, collate_fn=self.collate_fn, persistent_workers=True
+            num_workers=4, pin_memory=True, collate_fn=self.collate_fn, persistent_workers=True
         )
         
         self.valid_loader = DataLoader(
             self.valid_ds, batch_size=batch_size, shuffle=False, 
-            num_workers=8, pin_memory=True, collate_fn=self.collate_fn
+            num_workers=4, pin_memory=True, collate_fn=self.collate_fn
         )
 
         self.device = device
@@ -57,7 +59,7 @@ class Trainer:
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optim, len(self.train_loader), T_mult=2, eta_min=self.min_lr)
-        self.scaler = GradScaler()
+        # self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
 
         self.global_step = 0
@@ -67,58 +69,59 @@ class Trainer:
             num_batches = len(self.train_loader)
             start = time.time()
             label = ""
-            with autocast(device_type='cuda'):
-                for i_batch, batch in enumerate(self.train_loader):
-                    if batch is None: continue
-                    
-                    audios, clrs, geos = [item.to(self.device) for item in batch]
-                    self.model.zero_grad()
-                    loss, lclr, lgeo = self.forward(audios, clrs, geos)
-                    
-                    self.writer.add_scalar('Loss/Train_Batch', loss, self.global_step)
-                    self.writer.add_scalar('CLR_Loss/Train_Batch', lclr, self.global_step)
-                    self.writer.add_scalar('GEO_Loss/Train_Batch', lgeo, self.global_step)
-                    self.writer.add_scalar('Learning_Rate', self.scheduler.get_last_lr()[0], self.global_step)
 
-                    total = 33
-                    progress = math.ceil(i_batch*total/num_batches)
-                    remain = total - progress
-                    label = (
-                        f"Epoch: {i_epoch+1:3d}/{self.epochs} "
-                        f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                        f"LR: {self.scheduler.get_last_lr()[0]:.07f} "
-                        f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
-                        f"Loss: {loss:09.06f} "
-                        f"Elapsed: {time.time()-start:8.02f}s "
-                        )
-                    print(label, end="\r")
-                datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
-                print(label, datetime, end="\n")
-                self.save(i_epoch)
-                if self.valid:
-                    self.model.train(mode=False)
-                    with torch.no_grad():
-                        for i_batch, batch in enumerate(self.valid_loader):
-                            if batch is None: continue
-                            audios, clrs, geos = [item.to(self.device) for item in batch]
-                            loss, lclr, lgeo = self.forward(audios, clrs, geos, valid=True)
-                            
-                            self.writer.add_scalar('Loss/Valid_Batch', loss, self.global_step)
-                            self.writer.add_scalar('CLR_Loss/Valid_Batch', lclr, self.global_step)
-                            self.writer.add_scalar('GEO_Loss/Valid_Batch', lgeo, self.global_step)
+            for i_batch, batch in enumerate(self.train_loader):
+                if batch is None: continue
+                
+                audios, clrs, geos = [item.to(self.device) for item in batch]
+                self.model.zero_grad()
+                loss, lclr, lgeo = self.forward(audios, clrs, geos)
+                
+                self.writer.add_scalar('Loss/Train_Batch', loss, self.global_step)
+                self.writer.add_scalar('CLR_Loss/Train_Batch', lclr, self.global_step)
+                self.writer.add_scalar('GEO_Loss/Train_Batch', lgeo, self.global_step)
+                self.writer.add_scalar('Learning_Rate', self.scheduler.get_last_lr()[0], self.global_step)
 
-                            total = 33
-                            progress = math.ceil(i_batch*total/num_batches)
-                            remain = total - progress
-                            label = (
+                total = 10
+                progress = math.ceil(i_batch*total/num_batches)
+                remain = total - progress
+                label = (
+                    f"Epoch: {i_epoch+1:3d}/{self.epochs} "
+                    f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                    f"LR: {self.scheduler.get_last_lr()[0]:.07f} "
+                    f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
+                    f"Loss: {loss:09.06f} "
+                    f"Elapsed: {time.time()-start:8.02f}s "
+                    )
+                print(label, end="\r")
+            datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+            print(label, datetime, end="\n")
+            self.save(i_epoch)
+            if self.valid:
+                num_batches = len(self.valid_loader)
+                self.model.train(mode=False)
+                with torch.no_grad():
+                    for i_batch, batch in enumerate(self.valid_loader):
+                        if batch is None: continue
+                        audios, clrs, geos = [item.to(self.device) for item in batch]
+                        loss, lclr, lgeo = self.forward(audios, clrs, geos, valid=True)
+                        
+                        self.writer.add_scalar('Loss/Valid_Batch', loss, self.global_step)
+                        self.writer.add_scalar('CLR_Loss/Valid_Batch', lclr, self.global_step)
+                        self.writer.add_scalar('GEO_Loss/Valid_Batch', lgeo, self.global_step)
+
+                        total = 10
+                        progress = math.ceil(i_batch*total/num_batches)
+                        remain = total - progress
+                        label = (
                             f"VALİDATION: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
                             f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
                             f"Loss: {loss:09.06f} "
                             f"Elapsed: {time.time()-start:8.02f}s "
                             )
                         print(label, end="\r")
-                datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
-                print(label, datetime, end="\n")
+            datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+            print(label, datetime, end="\n")
         
         self.model.train(mode=False)
         return self.model
@@ -132,9 +135,11 @@ class Trainer:
 
         if not valid: # if training
             self.global_step += 1
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optim)
-            self.scaler.update()
+            loss.backward()
+            self.optim.step()
+            # self.scaler.scale(loss).backward()
+            # self.scaler.step(self.optim)
+            # self.scaler.update()
             self.scheduler.step()
         return loss.item(), clr_loss.item(), geo_loss.item()
     
@@ -174,8 +179,10 @@ class Collator(object):
             return None
 
         audio_paths, clrs, geos = zip(*batch)
-
-        audios = load_audios(audio_paths, target_sr=self.target_sr, max_seconds=self.max_seconds)
+        try:
+            audios = load_audios(audio_paths, target_sr=self.target_sr, max_seconds=self.max_seconds)
+        except:
+            return None
         clrs = torch.LongTensor(clrs)
         geos = torch.LongTensor(geos)
 
@@ -183,24 +190,31 @@ class Collator(object):
 
 class AudioDataset(Dataset):
     def __init__(self,
+                 file_list,
                  labels_dir, 
-                 file_list):
+                 audios_dir,
+                 ):
         
-        self.labels_dir = labels_dir
         self.file_list = file_list
+        self.labels_dir = labels_dir
+        self.audios_dir = audios_dir
 
     def __len__(self):
         return len(self.file_list)
     
     def __getitem__(self, index):
+        label_file = self.file_list[index]
+        label_path = os.path.join(self.labels_dir, label_file)
+        if not os.path.exists(label_path):
+            return None
         try:
-            label_file = self.file_list[index]
-            label_path = os.path.join(self.labels_dir, label_file)
-
             with open(label_path, "r") as f:
                 data = json.load(f)
 
-            audio_path = data["Audio_data"]
+            audio_file = os.path.basename(data["Audio_data"])
+            audio_path = os.path.join(self.audios_dir, audio_file)
+            if not os.path.exists(audio_path):
+                return None
             clr, geo = data["CLR"], data["GOE"]
 
             return audio_path, clr, geo

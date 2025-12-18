@@ -49,7 +49,7 @@ class Model(nn.Module):
             self.max_second,
             device=self.device
         )
-        # TODO: AudioEncoder
+        # TODO: AudioEncoder: UPDATE: Use nn.TransformerEncoderLayer
         self.encoder = AudioEncoder(
             self.embeddim,
             self.num_heads,
@@ -62,6 +62,7 @@ class Model(nn.Module):
             self.n_mels,
             device=self.device
         )
+
         # TODO: Head
         self.color_linear = nn.Linear(self.embeddim, 4).to(self.device)
         self.geo_linear = nn.Linear(self.embeddim, 4).to(self.device)
@@ -77,7 +78,6 @@ class Model(nn.Module):
         """Set the module in training mode or train a model.
 
         To train please provide the following kwargs:
-        - images_path (str)
         - audios_path (str)
         - labels_path (str)
         - epochs (int)
@@ -104,6 +104,7 @@ class Model(nn.Module):
         if "labels_dir" and "epochs" in kwargs:
 
             labels_dir = kwargs.get("labels_dir")
+            audios_dir = kwargs.get("audios_dir")
             epochs = kwargs.get("epochs")
             valid = kwargs.get("valid", True)
             batch_size = kwargs.get("batch_size", 12)
@@ -115,6 +116,7 @@ class Model(nn.Module):
             trainer = Trainer(
                 model=self,
                 labels_dir=labels_dir,
+                audios_dir=audios_dir,
                 batch_size=batch_size,
                 lr=lr,
                 min_lr=min_lr,
@@ -172,39 +174,51 @@ class AudioEncoder(nn.Module):
         self.nmels = nmels
         self.device = device
 
-        self.sa_blocks = nn.ModuleList(
-            [
-            nn.ModuleDict({
-                "ln": nn.LayerNorm(embeddim),
-                "mha": nn.MultiheadAttention(self.dim, self.num_heads, self.dropout, batch_first=True),
-                "dropout": nn.Dropout(self.dropout)})
-                for _ in range(self.num_layers)
-            ] 
-        ).to(device)
-        """Multi Head Self-Attention Blocks"""
+        # self.sa_blocks = nn.ModuleList(
+        #     [
+        #     nn.ModuleDict({
+        #         "ln": nn.LayerNorm(embeddim),
+        #         "mha": nn.MultiheadAttention(self.dim, self.num_heads, self.dropout, batch_first=True),
+        #         "dropout": nn.Dropout(self.dropout)})
+        #         for _ in range(self.num_layers)
+        #     ] 
+        # ).to(device)
+        # """Multi Head Self-Attention Blocks"""
 
-        self.linear_blocks = nn.ModuleList([
-            nn.Sequential(
-                nn.LayerNorm(self.dim),
-                nn.Linear(self.dim, int(self.dim * self.mlp_ratio)),
-                nn.SiLU(),
-                nn.Dropout(self.dropout),
-                nn.Linear(int(self.dim * self.mlp_ratio), self.dim),
-                nn.Dropout(self.dropout))
-            for _ in range(num_layers)
-        ]).to(device)
+        # self.linear_blocks = nn.ModuleList([
+        #     nn.Sequential(
+        #         nn.LayerNorm(self.dim),
+        #         nn.Linear(self.dim, int(self.dim * self.mlp_ratio)),
+        #         nn.SiLU(),
+        #         nn.Dropout(self.dropout),
+        #         nn.Linear(int(self.dim * self.mlp_ratio), self.dim),
+        #         nn.Dropout(self.dropout))
+        #     for _ in range(num_layers)
+        # ]).to(device)
 
-        self.proj = nn.Conv2d(
-            in_channels=1,
-            out_channels=self.dim,
-            stride=self.patch_stride,
-            kernel_size=self.patch_size,
-            bias=False
+        # self.proj = nn.Conv2d(
+        #     in_channels=1,
+        #     out_channels=self.dim,
+        #     stride=self.patch_stride,
+        #     kernel_size=self.patch_size,
+        #     bias=False
+        # ).to(device)
+
+        self.encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=self.dim,
+                nhead=self.num_heads,
+                dim_feedforward=int(self.dim * self.mlp_ratio),
+                dropout=self.dropout,
+                batch_first=True,
+                norm_first=True
+            ),
+            num_layers=self.num_layers
         ).to(device)
 
         self.set_seq()  
-        self.CLS_TOKEN = nn.Parameter(torch.rand(1, 1, self.dim)*0.1).to(device)
-        self.PE = nn.Parameter(torch.rand(1,self.num_seq+1, self.dim)).to(device)
+        self.CLS_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim)*0.01).to(device)
+        self.PE = nn.Parameter(torch.randn(1,self.num_seq+1, self.dim)*0.01).to(device)
 
     def forward(self, mel_spec_data:Tensor):
         # x.shape = (# [B, n_mels, 1000]
@@ -216,12 +230,14 @@ class AudioEncoder(nn.Module):
         x = x.transpose(1,2)                           # [B, Seq, dim]
         x = torch.cat([CLS_TOKEN, x], dim=1) + self.PE      # [B, 1+Seq, dim]
 
-        for sa, linear in zip(self.sa_blocks, self.linear_blocks):
-            res = x
-            lnx = sa["ln"](x)
-            x = sa["mha"](lnx, lnx, lnx)[0]
-            x = res + sa["dropout"](x)
-            x = x + linear(x)
+        # for sa, linear in zip(self.sa_blocks, self.linear_blocks):
+        #     res = x
+        #     lnx = sa["ln"](x)
+        #     x = sa["mha"](lnx, lnx, lnx)[0]
+        #     x = res + sa["dropout"](x)
+        #     x = x + linear(x)
+
+        x = self.encoder(x)
         return x[:, 0]
     
     @torch.no_grad()
@@ -232,40 +248,3 @@ class AudioEncoder(nn.Module):
         x = x.transpose(1,2)                                # [B, Seq, dim]
         self.num_seq = x.shape[1]
         del dummy, x
-
-sr = 16000
-win_length_second = 0.025
-stride_second = 0.01
-n_mels = 128
-embeddim = 768
-patch_size = 16
-patch_stride = 10
-max_second = 10
-num_heads = 2
-num_layers = 2
-dropout = 0.1
-mlp_ratio = 4.0
-device = torch.device('cuda')
-
-mdl = Model(
-    sr,
-    win_length_second,
-    stride_second,
-    n_mels,
-    embeddim,
-    patch_size,
-    patch_stride,
-    max_second,
-    num_heads,
-    num_layers,
-    dropout,
-    mlp_ratio,
-    device=device,
-)
-
-# data = load_audios(path=["dataset_CLR_GEO/augmented_audios/11609.wav"]*10, target_sr=16000, max_seconds=10)
-# print(data.shape)
-
-# out1, out2 = mdl(data.to(device))
-# print(out1.shape)
-# print(out2.shape)
