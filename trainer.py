@@ -3,9 +3,9 @@ import math
 import json
 import time
 import torch
+import random
 import torch.nn as nn
 from torch import Tensor
-# deleted due to circular import
 from .preprocess import load_audios
 from torch.amp import GradScaler, autocast
 from torch.utils.data import Dataset, DataLoader
@@ -58,7 +58,9 @@ class Trainer:
         self.model.train(mode=True)
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optim, len(self.train_loader), T_mult=2, eta_min=self.min_lr)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optim,
+                                                                    T_max=self.epochs*len(self.train_loader),
+                                                                    eta_min=1e-6)
         self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
 
@@ -216,7 +218,14 @@ class Collator(object):
 
         audio_paths, clrs, geos = zip(*batch)
         try:
-            audios = load_audios(audio_paths, target_sr=self.target_sr, max_seconds=self.max_seconds)
+            audios = load_audios(audio_paths, 
+                                 target_sr=self.target_sr, 
+                                 max_seconds=self.max_seconds,
+                                 begin_space=random.uniform(0.3, 1.5),
+                                 end_space=random.uniform(0.3,1.5),
+                                 rir_ratio=0.1,
+                                 noise_ratio=0.7,
+                                 snr=10)
         except:
             return None
         clrs = torch.LongTensor(clrs)
