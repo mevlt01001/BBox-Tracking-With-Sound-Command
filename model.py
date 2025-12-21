@@ -72,6 +72,10 @@ class Model(nn.Module):
         x = self.encoder(x)
         clr = self.color_linear(x)
         geo = self.geo_linear(x)
+        if self.training:
+            return clr, geo
+        clr = torch.softmax(clr, dim=-1)
+        geo = torch.softmax(geo, dim=-1)
         return clr, geo
     
     def train(self, mode=True,**kwargs):
