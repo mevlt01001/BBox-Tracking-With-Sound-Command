@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch import Tensor
 # deleted due to circular import
 from .preprocess import load_audios
-# from torch.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -59,68 +59,100 @@ class Trainer:
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optim, len(self.train_loader), T_mult=2, eta_min=self.min_lr)
-        # self.scaler = GradScaler()
+        self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
 
-        self.global_step = 0
+        self.train_step = 0
+        self.valid_step = 0
 
         for i_epoch in range(self.epochs):
             
             num_batches = len(self.train_loader)
             start = time.time()
             label = ""
+            epoch_clr_loss = 0
+            epoch_geo_loss = 0
+            epoch_loss = 0
+            epoch_step = 0
 
-            for i_batch, batch in enumerate(self.train_loader):
-                if batch is None: continue
-                
-                audios, clrs, geos = [item.to(self.device) for item in batch]
-                self.model.zero_grad()
-                loss, lclr, lgeo = self.forward(audios, clrs, geos)
-                
-                self.writer.add_scalar('Loss/Train_Batch', loss, self.global_step)
-                self.writer.add_scalar('CLR_Loss/Train_Batch', lclr, self.global_step)
-                self.writer.add_scalar('GEO_Loss/Train_Batch', lgeo, self.global_step)
-                self.writer.add_scalar('Learning_Rate', self.scheduler.get_last_lr()[0], self.global_step)
+            with autocast(device_type='cuda', dtype=torch.float32):
+                for i_batch, batch in enumerate(self.train_loader):
+                    if batch is None: continue
+                    
+                    audios, clrs, geos = [item.to(self.device) for item in batch]
+                    self.model.zero_grad()
+                    loss, lclr, lgeo = self.forward(audios, clrs, geos)
+                    
 
-                total = 10
-                progress = math.ceil(i_batch*total/num_batches)
-                remain = total - progress
-                label = (
-                    f"Epoch: {i_epoch+1:3d}/{self.epochs} "
-                    f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                    f"LR: {self.scheduler.get_last_lr()[0]:.07f} "
-                    f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
-                    f"Loss: {loss:09.06f} "
-                    f"Elapsed: {time.time()-start:8.02f}s "
-                    )
-                print(label, end="\r")
-            datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                    epoch_step += 1
+                    self.writer.add_scalar('Loss/Train_Batch', loss, self.train_step)
+                    self.writer.add_scalar('CLR_Loss/Train_Batch', lclr, self.train_step)
+                    self.writer.add_scalar('GEO_Loss/Train_Batch', lgeo, self.train_step)
+                    self.writer.add_scalar('Learning_Rate', self.scheduler.get_last_lr()[0], self.train_step)
+
+                    total = 10
+                    progress = math.ceil(i_batch*total/num_batches)
+                    remain = total - progress
+                    label = (
+                        f"Epoch: {i_epoch+1:3d}/{self.epochs} "
+                        f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                        f"LR: {self.scheduler.get_last_lr()[0]:.07f} "
+                        f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
+                        f"Loss: {loss:09.06f} "
+                        f"Elapsed: {time.time()-start:8.02f}s "
+                        )
+                    print(label, end="\r")
+
+                    epoch_loss += loss
+                    epoch_clr_loss += lclr
+                    epoch_geo_loss += lgeo
+
+                self.writer.add_scalar('Loss/Epoch', epoch_loss/epoch_step, i_epoch)
+                self.writer.add_scalar('CLR_Loss/Epoch', epoch_clr_loss/epoch_step, i_epoch)
+                self.writer.add_scalar('GEO_Loss/Epoch', epoch_geo_loss/epoch_step, i_epoch)
+
+            datetime = f"AVG_LOSS: {epoch_loss/epoch_step:09.06f} {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
             print(label, datetime, end="\n")
             self.save(i_epoch)
             if self.valid:
                 num_batches = len(self.valid_loader)
+                valid_clr_loss = 0
+                valid_geo_loss = 0
+                valid_loss = 0
+                valid_step = 0
+                
                 self.model.train(mode=False)
                 with torch.no_grad():
-                    for i_batch, batch in enumerate(self.valid_loader):
-                        if batch is None: continue
-                        audios, clrs, geos = [item.to(self.device) for item in batch]
-                        loss, lclr, lgeo = self.forward(audios, clrs, geos, valid=True)
-                        
-                        self.writer.add_scalar('Loss/Valid_Batch', loss, self.global_step)
-                        self.writer.add_scalar('CLR_Loss/Valid_Batch', lclr, self.global_step)
-                        self.writer.add_scalar('GEO_Loss/Valid_Batch', lgeo, self.global_step)
+                    with autocast(device_type='cuda', dtype=torch.float32):
+                        for i_batch, batch in enumerate(self.valid_loader):
+                            if batch is None: continue
+                            audios, clrs, geos = [item.to(self.device) for item in batch]
+                            loss, lclr, lgeo = self.forward(audios, clrs, geos, valid=True)
+                            
+                            self.writer.add_scalar('Loss/Valid_Batch', loss, self.valid_step)
+                            self.writer.add_scalar('CLR_Loss/Valid_Batch', lclr, self.valid_step)
+                            self.writer.add_scalar('GEO_Loss/Valid_Batch', lgeo, self.valid_step)
 
-                        total = 10
-                        progress = math.ceil(i_batch*total/num_batches)
-                        remain = total - progress
-                        label = (
-                            f"VALİDATION: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
-                            f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
-                            f"Loss: {loss:09.06f} "
-                            f"Elapsed: {time.time()-start:8.02f}s "
-                            )
-                        print(label, end="\r")
-            datetime = f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                            valid_step += 1
+                            total = 10
+                            progress = math.ceil(i_batch*total/num_batches)
+                            remain = total - progress
+                            label = (
+                                f"VALİDATION: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                                f"AVG_CLR_Loss: {valid_clr_loss/valid_step:09.06f} AVG_GEO_Loss: {valid_geo_loss/valid_step:09.06f} "
+                                f"AVG_Loss: {valid_loss/valid_step:09.06f} "
+                                f"Elapsed: {time.time()-start:8.02f}s "
+                                )
+                            print(label, end="\r")
+
+                            valid_loss += loss
+                            valid_clr_loss += lclr
+                            valid_geo_loss += lgeo
+
+                        self.writer.add_scalar('Loss/Valid', valid_loss/valid_step, i_epoch)
+                        self.writer.add_scalar('CLR_Loss/Valid', valid_clr_loss/valid_step, i_epoch)
+                        self.writer.add_scalar('GEO_Loss/Valid', valid_geo_loss/valid_step, i_epoch)
+            datetime = f"{time.strftime('%H:%M:%S', time.localtime(time.time()))}"
             print(label, datetime, end="\n")
         
         self.model.train(mode=False)
@@ -128,18 +160,22 @@ class Trainer:
     
     def forward(self, audios, clrs, geos, valid=False):
         if not valid: self.model.zero_grad()
+
         pred_clr, pred_geo = self.model.forward(audios)
         clr_loss = self.criterion.forward(pred_clr, clrs)
         geo_loss = self.criterion.forward(pred_geo, geos)
         loss = clr_loss + geo_loss
 
+        if valid:
+            self.valid_step += 1
+
         if not valid: # if training
-            self.global_step += 1
-            loss.backward()
-            self.optim.step()
-            # self.scaler.scale(loss).backward()
-            # self.scaler.step(self.optim)
-            # self.scaler.update()
+            self.train_step += 1
+            # loss.backward()
+            # self.optim.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optim)
+            self.scaler.update()
             self.scheduler.step()
         return loss.item(), clr_loss.item(), geo_loss.item()
     

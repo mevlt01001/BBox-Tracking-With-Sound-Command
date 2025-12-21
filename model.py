@@ -131,6 +131,44 @@ class Model(nn.Module):
         else:
             return super().train(mode)
 
+    @classmethod
+    def load(self, path:str, device:torch.device=torch.device('cpu')):
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        """
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'sr': self.model.sr,
+            'win_length_second': self.model.win_length_second,
+            'stride_second': self.model.stride_second,
+            'n_mels': self.model.n_mels,
+            'embeddim': self.model.embeddim,
+            'patch_size': self.model.patch_size,
+            'patch_stride': self.model.patch_stride,
+            'max_second': self.model.max_second,
+            'num_heads': self.model.num_heads,
+            'num_layers': self.model.num_layers,
+            'dropout': self.model.dropout,
+            'mlp_ratio': self.model.mlp_ratio,
+        }, f"checkpoints/model_epoch_{epoch}.pt")
+        """
+        state = ckpt['state_dict']
+        model = self(
+            sr=ckpt['sr'],
+            win_length_second=ckpt['win_length_second'],
+            stride_second=ckpt['stride_second'],
+            n_mels=ckpt['n_mels'],
+            embeddim=ckpt['embeddim'],
+            patch_size=ckpt['patch_size'],
+            patch_stride=ckpt['patch_stride'],
+            max_second=ckpt['max_second'],
+            num_heads=ckpt['num_heads'],
+            num_layers=ckpt['num_layers'],
+            dropout=ckpt['dropout'],
+            mlp_ratio=ckpt['mlp_ratio'],
+            device=device
+        )
+        return model.load_state_dict(state)
+
 class AudioEncoder(nn.Module):
     """Audio Sequence Encoder
 
@@ -196,13 +234,13 @@ class AudioEncoder(nn.Module):
         #     for _ in range(num_layers)
         # ]).to(device)
 
-        # self.proj = nn.Conv2d(
-        #     in_channels=1,
-        #     out_channels=self.dim,
-        #     stride=self.patch_stride,
-        #     kernel_size=self.patch_size,
-        #     bias=False
-        # ).to(device)
+        self.proj = nn.Conv2d(
+            in_channels=1,
+            out_channels=self.dim,
+            stride=self.patch_stride,
+            kernel_size=self.patch_size,
+            bias=False
+        ).to(device)
 
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -217,8 +255,8 @@ class AudioEncoder(nn.Module):
         ).to(device)
 
         self.set_seq()  
-        self.CLS_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim)*0.01).to(device)
-        self.PE = nn.Parameter(torch.randn(1,self.num_seq+1, self.dim)*0.01).to(device)
+        self.CLS_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device)*0.01)
+        self.PE = nn.Parameter(torch.randn(1,self.num_seq+1, self.dim, requires_grad=True, device=device)*0.01)
 
     def forward(self, mel_spec_data:Tensor):
         # x.shape = (# [B, n_mels, 1000]
