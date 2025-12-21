@@ -167,7 +167,8 @@ class Model(nn.Module):
             mlp_ratio=ckpt['mlp_ratio'],
             device=device
         )
-        return model.load_state_dict(state)
+        model.load_state_dict(state)
+        return model
 
 class AudioEncoder(nn.Module):
     """Audio Sequence Encoder
