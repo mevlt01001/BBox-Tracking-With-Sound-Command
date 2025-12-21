@@ -1,8 +1,93 @@
+import random
 import torch, torchaudio
 from torch import Tensor
 import torch.nn as nn
 
-def load_audios(path:str|list[str], target_sr=None, max_seconds:int=None):
+rir_list_path = "RIRS_NOISES/simulated_rirs/smallroom/rir_list"
+noise_list_path = "RIRS_NOISES/pointsource_noises/noise_list"
+
+with open(rir_list_path, "r") as f:
+    rir_files = f.read().splitlines()
+
+for idx, rir_file in enumerate(rir_files):
+    rir_files[idx] = rir_file.split(" ")[-1]
+
+with open(noise_list_path, "r") as f:
+    noise_files = f.read().splitlines()
+
+for idx, noise_file in enumerate(noise_files):
+    noise_files[idx] = noise_file.split(" ")[-1]
+
+
+# DATA AUGMENTATION FUNCTIONS
+
+def add_space(audio, sr, begin_space=0.5, end_space=0.5):
+    """
+    Adds space to the beginning and end of the audio.
+    Args:
+        audio (np.ndarray): Audio array.
+        sr (int): Sample rate.
+        begin_space (float): Space to add to the beginning of the audio in seconds.
+        end_space (float): Space to add to the end of the audio in seconds.
+    Returns:
+        np.ndarray: Audio array with space added.
+    """
+    begin_space = int(begin_space * sr)
+    end_space = int(end_space * sr)
+    audio = torch.cat((torch.zeros(1, begin_space), audio, torch.zeros(1, end_space)), dim=1)
+    return audio
+
+def add_noise(clean_audio:torch.Tensor, noise:torch.Tensor, snr_db:float):
+    """
+    Adds noise to the audio.
+    Args:
+        clean_waveform (torch.Tensor): Clean audio waveform.
+        noise_waveform (torch.Tensor): Noise audio waveform.
+        snr_db (float): SNR (Signal-to-Noise Ratio) in decibels.
+    Returns:
+        torch.Tensor: Noisy audio waveform.
+    """
+    
+    noisy_waveform = torchaudio.functional.add_noise(clean_audio, noise, snr=torch.Tensor([snr_db]))
+
+    max_val = torch.abs(noisy_waveform).max()
+    if max_val > 1.0:
+        noisy_waveform = noisy_waveform / max_val
+        
+    return noisy_waveform
+
+def add_rir(audio, kernel):
+    """
+    Adds RIR(Room Impulse Respond) to given audio.
+    Args:
+        audio (torch.Tensor): (Clean)Audio waveform.
+        kernel (torch.Tensor): Room Impulse Respond kernel.
+    Returns:
+        torch.Tensor: Affected audio waveform by Room Impulse respond Kernel
+    """
+    n = audio.shape[-1]
+    m = kernel.shape[-1]
+    target_length = n + m - 1
+
+    kernel = kernel / (torch.norm(kernel, p=2) + 1e-9)
+    signal_f = torch.fft.rfft(audio, n=target_length)
+    kernel_f = torch.fft.rfft(kernel, n=target_length)
+    
+    output_f = signal_f * kernel_f
+    
+    output = torch.fft.irfft(output_f, n=target_length)
+    
+    return output[..., :n]
+
+def load_audios(path:str|list[str], 
+                max_seconds:int, 
+                target_sr=None,
+                begin_space:float=0.0,
+                end_space:float=0.0, 
+                rir_ratio:float=0.0, 
+                noise_ratio:float=0.0,
+                snr:int=10):
+    
     audios = []
     if isinstance(path, str):
         path = [path]
@@ -10,11 +95,31 @@ def load_audios(path:str|list[str], target_sr=None, max_seconds:int=None):
     for path in path:
         padding = 0
         data, sr = torchaudio.load(path)
+        data = add_space(data, sr, begin_space, end_space)
+        rir, rir_sr = torchaudio.load(random.choice(rir_files))
+        noise, noise_sr = torchaudio.load(random.choice(noise_files))
+        
+        
         if target_sr is not None:
             data = preproecss(data, sr, target_sr)
-            sr = target_sr
+            rir = preproecss(rir, rir_sr, target_sr)
+            noise = preproecss(noise, noise_sr, target_sr)
+            data_lenght, noise_lenght = data.shape[-1], noise.shape[-1]
+
+        if random.uniform(0.0, 1.0) < rir_ratio:
+            data = add_rir(data, rir)
+        
+        if random.uniform(0.0, 1.0) < noise_ratio:
+            if data_lenght>noise_lenght:
+                repeat = int(data_lenght/noise_lenght)+1
+                noise = noise.repeat(1, repeat)
+            noise = noise[..., :data_lenght]
+            data = add_noise(data, noise, snr)
+        
+
         if max_seconds is not None:
-            if data.shape[1] > max_seconds*sr:
+            sr = target_sr
+            if data_lenght > max_seconds*sr:
                 data = data[:, :max_seconds*sr]
             padding = max_seconds*sr - data.shape[1]
             data = torch.nn.functional.pad(data, (0,padding,0,0), mode='constant', value=0.0)
