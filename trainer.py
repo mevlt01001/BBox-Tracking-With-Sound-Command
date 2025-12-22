@@ -226,7 +226,8 @@ class Collator(object):
                                  rir_ratio=0.1,
                                  noise_ratio=0.7,
                                  snr=10)
-        except:
+        except Exception as e:
+            print(e)
             return None
         clrs = torch.LongTensor(clrs)
         geos = torch.LongTensor(geos)
