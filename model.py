@@ -281,6 +281,7 @@ class AudioEncoder(nn.Module):
         #     x = x + linear(x)
 
         x = self.encoder(x)
+        # print(f"AudioEncoder.shape: {x[:, 0].shape}, CLS_TOKEN.shape: {CLS_TOKEN.squeeze(1).shape}")
         return x[:, 0]
     
     @torch.no_grad()
