@@ -1,10 +1,11 @@
-import random
+import random, os
 import torch, torchaudio
 from torch import Tensor
 import torch.nn as nn
 
 rir_list_path = "RIRS_NOISES/simulated_rirs/smallroom/rir_list"
 noise_list_path = "RIRS_NOISES/pointsource_noises/noise_list"
+rir_root = ""
 
 with open(rir_list_path, "r") as f:
     rir_files = f.read().splitlines()
@@ -96,8 +97,8 @@ def load_audios(path:str|list[str],
         padding = 0
         data, sr = torchaudio.load(path)
         data = add_space(data, sr, begin_space, end_space)
-        rir, rir_sr = torchaudio.load(random.choice(rir_files))
-        noise, noise_sr = torchaudio.load(random.choice(noise_files))
+        rir, rir_sr = torchaudio.load(os.path.join(rir_root, random.choice(rir_files)))
+        noise, noise_sr = torchaudio.load(os.path.join(rir_root, random.choice(noise_files)))
         
         
         if target_sr is not None:
