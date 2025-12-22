@@ -252,6 +252,7 @@ class AudioDataset(Dataset):
         label_file = self.file_list[index]
         label_path = os.path.join(self.labels_dir, label_file)
         if not os.path.exists(label_path):
+            print(f"Label file does not exist {label_path}\n")
             return None
         try:
             with open(label_path, "r") as f:
@@ -260,6 +261,7 @@ class AudioDataset(Dataset):
             audio_file = os.path.basename(data["Audio_data"])
             audio_path = os.path.join(self.audios_dir, audio_file)
             if not os.path.exists(audio_path):
+                print(f"Audio file does not exist {audio_path}\n")
                 return None
             clr, geo = data["CLR"], data["GOE"]
 
