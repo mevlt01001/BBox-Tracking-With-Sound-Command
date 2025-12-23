@@ -58,9 +58,9 @@ class Trainer:
         self.model.train(mode=True)
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optim,
-                                                                    T_max=self.epochs*len(self.train_loader),
-                                                                    eta_min=1e-6)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optim, T_0=len(self.train_loader), T_mult=2, eta_min=self.min_lr
+        )
         self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
 
@@ -189,6 +189,8 @@ class Trainer:
         os.makedirs("checkpoints", exist_ok=True)
         torch.save({
             'state_dict': self.model.state_dict(),
+            'epoch': epoch,
+            'loss': loss,
             'sr': self.model.sr,
             'win_length_second': self.model.win_length_second,
             'stride_second': self.model.stride_second,
