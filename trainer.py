@@ -66,6 +66,7 @@ class Trainer:
 
         self.train_step = 0
         self.valid_step = 0
+        self.best_loss = float('inf')
 
         for i_epoch in range(self.epochs):
             
@@ -115,7 +116,6 @@ class Trainer:
 
             datetime = f"AVG_LOSS: {epoch_loss/epoch_step:09.06f} {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
             print(label, datetime, end="\n")
-            self.save(i_epoch)
             if self.valid:
                 num_batches = len(self.valid_loader)
                 valid_clr_loss = 0
@@ -155,6 +155,10 @@ class Trainer:
                         self.writer.add_scalar('CLR_Loss/Valid', valid_clr_loss/valid_step, i_epoch)
                         self.writer.add_scalar('GEO_Loss/Valid', valid_geo_loss/valid_step, i_epoch)
             datetime = f"{time.strftime('%H:%M:%S', time.localtime(time.time()))}"
+            if self.valid:
+                self.save(i_epoch, valid_loss/valid_step)
+            else:
+                self.save(i_epoch, epoch_loss/epoch_step)
             print(label, datetime, end="\n")
         
         self.model.train(mode=False)
@@ -181,7 +185,7 @@ class Trainer:
             self.scheduler.step()
         return loss.item(), clr_loss.item(), geo_loss.item()
     
-    def save(self, epoch:int):
+    def save(self, epoch:int, loss:float):
         os.makedirs("checkpoints", exist_ok=True)
         torch.save({
             'state_dict': self.model.state_dict(),
@@ -197,7 +201,24 @@ class Trainer:
             'num_layers': self.model.num_layers,
             'dropout': self.model.dropout,
             'mlp_ratio': self.model.mlp_ratio,
-        }, f"checkpoints/model_epoch_{epoch}.pt")
+        }, f"checkpoints/last.pt")
+        if loss < self.best_loss:
+            self.best_loss = loss
+            torch.save({
+                'state_dict': self.model.state_dict(),
+                'sr': self.model.sr,
+                'win_length_second': self.model.win_length_second,
+                'stride_second': self.model.stride_second,
+                'n_mels': self.model.n_mels,
+                'embeddim': self.model.embeddim,
+                'patch_size': self.model.patch_size,
+                'patch_stride': self.model.patch_stride,
+                'max_second': self.model.max_second,
+                'num_heads': self.model.num_heads,
+                'num_layers': self.model.num_layers,
+                'dropout': self.model.dropout,
+                'mlp_ratio': self.model.mlp_ratio,
+            }, f"checkpoints/best.pt")
 
         
 
