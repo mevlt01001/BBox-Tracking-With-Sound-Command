@@ -225,7 +225,7 @@ class Collator(object):
                                  end_space=random.uniform(0.3,1.5),
                                  rir_ratio=0.1,
                                  noise_ratio=0.7,
-                                 snr=10)
+                                 snr=15)
         except Exception as e:
             print(e)
             return None
