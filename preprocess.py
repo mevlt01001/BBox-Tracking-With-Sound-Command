@@ -16,9 +16,12 @@ for idx, rir_file in enumerate(rir_files):
 with open(noise_list_path, "r") as f:
     noise_files = f.read().splitlines()
 
+noises = []
 for idx, noise_file in enumerate(noise_files):
-    noise_files[idx] = noise_file.split(" ")[-1]
-
+    noise = noise_file.split(" ")[-1]
+    _type = noise_file.split(" ")[-2]
+    if _type == "background":
+        noises.append(noise)
 
 # DATA AUGMENTATION FUNCTIONS
 
@@ -90,6 +93,7 @@ def load_audios(path:str|list[str],
                 snr:int=10):
     
     audios = []
+    lenghts = []
     if isinstance(path, str):
         path = [path]
 
@@ -98,14 +102,15 @@ def load_audios(path:str|list[str],
         data, sr = torchaudio.load(path)
         data = add_space(data, sr, begin_space, end_space)
         rir, rir_sr = torchaudio.load(os.path.join(rir_root, random.choice(rir_files)))
-        noise, noise_sr = torchaudio.load(os.path.join(rir_root, random.choice(noise_files)))
+        noise, noise_sr = torchaudio.load(os.path.join(rir_root, random.choice(noises)))
         
         
         if target_sr is not None:
             data = preproecss(data, sr, target_sr)
             rir = preproecss(rir, rir_sr, target_sr)
             noise = preproecss(noise, noise_sr, target_sr)
-            data_lenght, noise_lenght = data.shape[-1], noise.shape[-1]
+        
+        data_lenght, noise_lenght = data.shape[-1], noise.shape[-1]
 
         if random.uniform(0.0, 1.0) < rir_ratio:
             data = add_rir(data, rir)
@@ -124,10 +129,13 @@ def load_audios(path:str|list[str],
                 data = data[:, :max_seconds*sr]
             padding = max_seconds*sr - data.shape[1]
             data = torch.nn.functional.pad(data, (0,padding,0,0), mode='constant', value=0.0)
-        audios.append((data))
-    else:
-        audios = torch.cat(audios, dim=0)
-    return audios
+        audios.append(data)
+        lenghts.append(data_lenght)
+
+    audios = torch.cat(audios, dim=0)
+    lenghts = torch.tensor(lenghts)
+
+    return audios, lenghts
 
 def preproecss(audio:Tensor, sr:int, target_sr:int=16000):
     resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=target_sr)
@@ -158,11 +166,19 @@ class Preprocess(nn.Module):
         self.patch_size = patch_size                # 16 for AST (Audio Spectrogram Transformer)
         self.patch_stride = patch_stride            # 10 for AST (Audio Spectrogram Transformer)
 
+        self.n_fft = int(sr * win_length_second)
+        self.hop_length = int(sr * stride_second)
+
+        self.s1_max = (max_second*sr - self.n_fft)//self.hop_length+1 
+        """torchaudio.transforms.MelSpectrogram returns [B, NMELS, s1_max]"""
+        self.s2_max = ((self.s1_max - self.patch_size)//self.patch_stride) + 1
+        """torch.nn.Conv1d returns [B, embeddim, s2_max]"""
+
         self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
             sample_rate=sr,
-            n_fft=int(sr * self.win_length_second),
-            win_length=int(sr * self.win_length_second),
-            hop_length=int(self.sr * self.stride_second),
+            n_fft=self.n_fft,
+            win_length=self.n_fft,
+            hop_length=self.hop_length,
             n_mels=self.n_mels,
             f_min=0,
             f_max=self.sr // 2,
@@ -172,18 +188,34 @@ class Preprocess(nn.Module):
         ).to(device)
 
         self.amplitude_to_db = torchaudio.transforms.AmplitudeToDB("power", top_db=80).to(device)
-        self.set_seq() # self.out.shape = [B,1,N_MELS,SEQ]
 
-    @torch.no_grad()
-    def forward(self, x:Tensor):
+        self.embedding = nn.Conv1d(in_channels=self.n_mels, 
+                                   out_channels=self.embeddim, 
+                                   kernel_size=self.patch_size, 
+                                   stride=self.patch_stride,
+                                   bias=False).to(device) # [B, NMELS, s1] to [B, embeddim, ((s1 - patch_size)//patch_stride) + 1]
+
+    def forward(self, x:Tensor, lenghts:Tensor=None):
         # x.shape = (B, self.max_seconds*self.sr)
-        x = self.mel_spectrogram.forward(x).unsqueeze(1)    # [B, 1, n_mels, 1000]
-        x = self.amplitude_to_db.forward(x)                 # [B, 1, n_mels, 1000]
-        return x
+        B, _ = x.shape
     
-    @torch.no_grad()
-    def set_seq(self):
-        dummy = torch.rand(1,self.max_seconds*self.sr, device=self.device)
-        out = self.forward(dummy)
-        self.num_mel_seq = out.shape[-1]
-        del dummy, out
+        x = self.mel_spectrogram.forward(x)       # [B, n_mels, s1_max]
+        x = self.amplitude_to_db.forward(x)       # [B, n_mels, s1_max]
+        x = self.embedding(x)                     # [B, embeddim, s2_max]
+        x = x.permute(0, 2, 1)                    # [B, s2_max, embeddim]
+        
+        masks = torch.zeros(B, self.s2_max, device=self.device).bool()
+        
+        if lenghts is not None:
+            with torch.no_grad():
+                s1 = (lenghts - self.n_fft)//self.hop_length+1      # [B]
+                s1 = torch.clamp(s1, min=0, max=self.s1_max)        # [B]
+                s2 = (s1 - self.patch_size)//self.patch_stride+1    # [B]
+                s2 = torch.clamp(s2, min=0, max=self.s2_max)        # [B]
+
+                indices = torch.arange(self.s2_max, device=self.device)  # [s2_max]
+
+                masks = indices >= s2.unsqueeze(1)                  # [B, s2_max]
+
+        return x, masks
+    

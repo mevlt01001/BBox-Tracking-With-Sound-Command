@@ -82,9 +82,9 @@ class Trainer:
                 for i_batch, batch in enumerate(self.train_loader):
                     if batch is None: continue
                     
-                    audios, clrs, geos = [item.to(self.device) for item in batch]
+                    audios, lenghts, clrs, geos = [item.to(self.device) for item in batch]
                     self.model.zero_grad()
-                    loss, lclr, lgeo = self.forward(audios, clrs, geos)
+                    loss, lclr, lgeo = self.forward(audios, lenghts, clrs, geos)
                     
 
                     epoch_step += 1
@@ -164,10 +164,10 @@ class Trainer:
         self.model.train(mode=False)
         return self.model
     
-    def forward(self, audios, clrs, geos, valid=False):
+    def forward(self, audios, lenghts, clrs, geos, valid=False):
         if not valid: self.model.zero_grad()
 
-        pred_clr, pred_geo = self.model.forward(audios)
+        pred_clr, pred_geo = self.model.forward(audios, lenghts)
         clr_loss = self.criterion.forward(pred_clr, clrs)
         geo_loss = self.criterion.forward(pred_geo, geos)
         loss = clr_loss + geo_loss
@@ -208,6 +208,8 @@ class Trainer:
             self.best_loss = loss
             torch.save({
                 'state_dict': self.model.state_dict(),
+                'epoch': epoch,
+                'loss': loss,
                 'sr': self.model.sr,
                 'win_length_second': self.model.win_length_second,
                 'stride_second': self.model.stride_second,
@@ -241,7 +243,7 @@ class Collator(object):
 
         audio_paths, clrs, geos = zip(*batch)
         try:
-            audios = load_audios(audio_paths, 
+            audios, lenghts = load_audios(audio_paths, 
                                  target_sr=self.target_sr, 
                                  max_seconds=self.max_seconds,
                                  begin_space=random.uniform(0.3, 1.5),
@@ -255,7 +257,7 @@ class Collator(object):
         clrs = torch.LongTensor(clrs)
         geos = torch.LongTensor(geos)
 
-        return audios, clrs, geos
+        return audios, lenghts, clrs, geos
 
 class AudioDataset(Dataset):
     def __init__(self,
