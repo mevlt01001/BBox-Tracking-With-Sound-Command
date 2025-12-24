@@ -128,8 +128,8 @@ class Trainer:
                     with autocast(device_type='cuda', dtype=torch.float32):
                         for i_batch, batch in enumerate(self.valid_loader):
                             if batch is None: continue
-                            audios, clrs, geos = [item.to(self.device) for item in batch]
-                            loss, lclr, lgeo = self.forward(audios, clrs, geos, valid=True)
+                            audios, lenghts, clrs, geos = [item.to(self.device) for item in batch]
+                            loss, lclr, lgeo = self.forward(audios, lenghts, clrs, geos, valid=True)
                             
                             self.writer.add_scalar('Loss/Valid_Batch', loss, self.valid_step)
                             self.writer.add_scalar('CLR_Loss/Valid_Batch', lclr, self.valid_step)
