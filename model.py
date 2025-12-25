@@ -1,3 +1,4 @@
+import math
 import torch
 import torchaudio
 import torch.nn as nn
@@ -232,7 +233,12 @@ class AudioEncoder(nn.Module):
 
         self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
         self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
-        self.PE = nn.Parameter(torch.randn(1,self.s2_max+2, self.dim, requires_grad=True, device=device))
+        pe = torch.zeros(self.s2_max, self.dim)
+        position = torch.arange(0, self.s2_max, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.dim, 2).float() * (-math.log(10000.0) / self.dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.PE = pe.unsqueeze(0).to(device)
         self.input_norm = nn.LayerNorm(embeddim, device=device)
 
     def forward(self, x:Tensor,             # x.shape = [B, s2_max, dim]
@@ -242,7 +248,8 @@ class AudioEncoder(nn.Module):
         CLR_TOKEN = self.CLR_TOKEN.expand(x.shape[0], -1, -1)     # [B, 1, dim]
         GEO_TOKEN = self.GEO_TOKEN.expand(x.shape[0], -1, -1)     # [B, 1, dim]
         key_padding_mask = torch.cat([torch.zeros(B, 2, dtype=torch.bool, device=self.device), key_padding_mask], dim=1).to(self.device)
-        x = torch.cat([CLR_TOKEN, GEO_TOKEN, x], dim=1) + self.PE
+        x = x + self.PE
+        x = torch.cat([CLR_TOKEN, GEO_TOKEN, x], dim=1)
         x = self.audio_encoder(self.input_norm(x), src_key_padding_mask=key_padding_mask)  # [B, 2+s2_max, dim]
         return x
     
