@@ -233,7 +233,7 @@ class AudioEncoder(nn.Module):
         self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
         self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
         self.PE = nn.Parameter(torch.randn(1,self.s2_max+2, self.dim, requires_grad=True, device=device))
-        self.input_norm = nn.LayerNorm(embeddim)
+        self.input_norm = nn.LayerNorm(embeddim, device=device)
 
     def forward(self, x:Tensor,             # x.shape = [B, s2_max, dim]
                 key_padding_mask:Tensor):   # key_padding_mask.shape = [B, s2_max]
