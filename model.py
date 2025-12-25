@@ -231,8 +231,8 @@ class AudioEncoder(nn.Module):
             num_layers=self.num_layers
         ).to(device)
 
-        self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
-        self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=True, device=device))
+        self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=False, device=device))
+        self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=False, device=device))
         pe = torch.zeros(self.s2_max, self.dim)
         position = torch.arange(0, self.s2_max, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, self.dim, 2).float() * (-math.log(10000.0) / self.dim))
