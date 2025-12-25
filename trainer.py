@@ -58,8 +58,8 @@ class Trainer:
         self.model.train(mode=True)
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optim, T_0=len(self.train_loader), T_mult=2, eta_min=self.min_lr
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optim, T_max=len(self.train_loader)*self.epochs, eta_min=self.min_lr
         )
         self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
