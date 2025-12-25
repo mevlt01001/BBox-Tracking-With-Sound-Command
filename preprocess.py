@@ -201,6 +201,7 @@ class Preprocess(nn.Module):
     
         x = self.mel_spectrogram.forward(x)       # [B, n_mels, s1_max]
         x = self.amplitude_to_db.forward(x)       # [B, n_mels, s1_max]
+        x = (x+40)/40                             # [B, n_mels, s1_max] normalized to [-1, 1]
         x = self.embedding(x)                     # [B, embeddim, s2_max]
         x = x.permute(0, 2, 1)                    # [B, s2_max, embeddim]
         

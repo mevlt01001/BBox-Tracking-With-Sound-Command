@@ -246,11 +246,11 @@ class Collator(object):
             audios, lenghts = load_audios(audio_paths, 
                                  target_sr=self.target_sr, 
                                  max_seconds=self.max_seconds,
-                                 begin_space=random.uniform(0.3, 1.5),
-                                 end_space=random.uniform(0.3,1.5),
-                                 rir_ratio=0.1,
-                                 noise_ratio=0.7,
-                                 snr=15)
+                                 begin_space=random.uniform(0.3, 1.0),
+                                 end_space=random.uniform(0.3,1.0),
+                                 rir_ratio=0.15,
+                                 noise_ratio=0.25,
+                                 snr=10)
         except Exception as e:
             print(e)
             return None
