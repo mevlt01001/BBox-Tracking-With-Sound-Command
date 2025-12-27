@@ -185,7 +185,6 @@ class Preprocess(nn.Module):
             power=2.0,
             normalized=True,
             center=False,
-            window_fn=torch.hann_window
         ).to(device)
 
         self.amplitude_to_db = torchaudio.transforms.AmplitudeToDB("power", top_db=80).to(device)
@@ -195,7 +194,6 @@ class Preprocess(nn.Module):
         B, _ = x.shape
     
         x = self.mel_spectrogram.forward(x)       # [B, n_mels, s1_max]
-        x = self.amplitude_to_db.forward(x)       # [B, n_mels, s1_max]
-        x = self.norm1.forward(x).unsqueeze(1)    # [B,1,n_mels, s1_max]        
+        x = self.amplitude_to_db.forward(x).unsqueeze(1)        # [B, n_mels, s1_max]
 
         return x
