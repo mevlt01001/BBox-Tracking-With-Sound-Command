@@ -1,9 +1,10 @@
 import math
 import torch
 import torchaudio
+import torchvision
 import torch.nn as nn
 from torch import Tensor
-from .preprocess import Preprocess
+from .preprocess import Preprocess, load_audios
 from .trainer import Trainer
 
 class Model(nn.Module):
@@ -50,35 +51,34 @@ class Model(nn.Module):
             self.max_second,
             device=self.device
         )
-        # TODO: AudioEncoder: UPDATE: Use nn.TransformerEncoderLayer
-        self.encoder = AudioEncoder(
-            self.embeddim,
-            self.num_heads,
-            self.num_layers,
-            self.dropout,
-            self.mlp_ratio,
-            self.patch_size,
-            self.patch_stride,
-            self.preprocess.s2_max,
-            self.n_mels,
-            device=self.device
-        )
+        # # TODO: AudioEncoder: UPDATE: Use nn.TransformerEncoderLayer
+        # self.encoder = AudioEncoder(
+        #     self.embeddim,
+        #     self.num_heads,
+        #     self.num_layers,
+        #     self.dropout,
+        #     self.mlp_ratio,
+        #     self.patch_size,
+        #     self.patch_stride,
+        #     self.preprocess.s2_max,
+        #     self.n_mels,
+        #     device=self.device
+        # )
 
         # TODO: Head
-        self.color_linear = nn.Linear(self.embeddim, 4).to(self.device)
-        self.geo_linear = nn.Linear(self.embeddim, 4).to(self.device)
+        self.color_linear = nn.Linear(512, 4).to(self.device)
+        self.geo_linear = nn.Linear(512, 4).to(self.device)
+
+        self.Resnet18Encoder = Resnet18Encoder().to(self.device)
+        self.encoder = self.Resnet18Encoder
 
     def forward(self, x:Tensor,         # x.shape = [B, Waveform]
                 lenghts:Tensor=None):   # lenghts.shape = [B]
         
-        x, masks = self.preprocess(x, lenghts)  # x.shape = [B, s2_max, embeddim], masks.shape = [B, s2_max]
-        x = self.encoder(x, masks)              # x.shape = [B, 2+s2_max, embeddim]
-        clr = self.color_linear(x[:, 0])        # clr.shape = [B, 4]
-        geo = self.geo_linear(x[:, 1])          # geo.shape = [B, 4]
-        if self.training:
-            return clr, geo
-        clr = torch.softmax(clr, dim=-1)
-        geo = torch.softmax(geo, dim=-1)
+        x = self.preprocess(x, lenghts)  # x.shape = [B, n_mels, time]
+        x = self.encoder(x)                     # x.shape = [B, 512]
+        clr = self.color_linear(x)        # clr.shape = [B, 4]
+        geo = self.geo_linear(x)          # geo.shape = [B, 4]
         return clr, geo
     
     def train(self, mode=True,**kwargs):
@@ -119,6 +119,7 @@ class Model(nn.Module):
             lr = kwargs.get("lr", 0.001)
             min_lr = kwargs.get("min_lr", 0.0001)
             log_dir = kwargs.get("log_dir", "runs/sound_control")
+            scheduler = kwargs.get("scheduler", True)
 
             trainer = Trainer(
                 model=self,
@@ -131,6 +132,7 @@ class Model(nn.Module):
                 test_ratio=valid_ratio,
                 valid=valid,
                 log_dir=log_dir,
+                scheduler=scheduler,
                 device=self.device
             )
             
@@ -225,21 +227,32 @@ class AudioEncoder(nn.Module):
                 nhead=self.num_heads,
                 dim_feedforward=int(self.dim * self.mlp_ratio),
                 dropout=self.dropout,
-                batch_first=True,
-                norm_first=True
+                batch_first=True
             ),
             num_layers=self.num_layers
         ).to(device)
 
-        self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=False, device=device))
-        self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, requires_grad=False, device=device))
+        self.CLR_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, device=device), requires_grad=True)
+        self.GEO_TOKEN = nn.Parameter(torch.randn(1, 1, self.dim, device=device), requires_grad=True)
         pe = torch.zeros(self.s2_max, self.dim)
         position = torch.arange(0, self.s2_max, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, self.dim, 2).float() * (-math.log(10000.0) / self.dim))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.PE = pe.unsqueeze(0).to(device)
-        self.input_norm = nn.LayerNorm(embeddim, device=device)
+
+        info = f"""
+        Audio Sequence Encoder
+        Embedding dimension: {self.dim}
+        Number of layers: {self.num_layers}
+        Number of heads: {self.num_heads}
+        Feed forward projection ratio: {self.mlp_ratio}
+        Patch size: {self.patch_size}
+        Patch stride: {self.patch_stride}
+        Sequence Number: {self.s2_max}
+        Mel Bands: {self.nmels}
+        """
+        print(info)
 
     def forward(self, x:Tensor,             # x.shape = [B, s2_max, dim]
                 key_padding_mask:Tensor):   # key_padding_mask.shape = [B, s2_max]
@@ -250,6 +263,17 @@ class AudioEncoder(nn.Module):
         key_padding_mask = torch.cat([torch.zeros(B, 2, dtype=torch.bool, device=self.device), key_padding_mask], dim=1).to(self.device)
         x = x + self.PE
         x = torch.cat([CLR_TOKEN, GEO_TOKEN, x], dim=1)
-        x = self.audio_encoder(self.input_norm(x), src_key_padding_mask=key_padding_mask)  # [B, 2+s2_max, dim]
+        x = self.audio_encoder.forward(x, src_key_padding_mask=key_padding_mask)  # [B, 2+s2_max, dim]
+        return x
+    
+class Resnet18Encoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.resnet = torchvision.models.resnet18(pretrained=False)
+        self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.resnet.fc = nn.Identity()
+
+    def forward(self, x):
+        x = self.resnet(x)
         return x
     

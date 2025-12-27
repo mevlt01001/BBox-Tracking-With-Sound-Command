@@ -2,7 +2,7 @@ import os
 import math
 import json
 import time
-import torch
+import torch, torchaudio
 import random
 import torch.nn as nn
 from torch import Tensor
@@ -23,6 +23,7 @@ class Trainer:
                  test_ratio:float=0.2,
                  valid:bool=True,
                  log_dir:os.PathLike="runs/sound_control",
+                 scheduler:torch.optim.lr_scheduler=None,
                  device:torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         
         self.model = model
@@ -53,14 +54,14 @@ class Trainer:
         )
 
         self.device = device
+        self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optim, T_max=len(self.train_loader)*self.epochs, eta_min=self.min_lr
+        )
         
     def train(self):
         self.model.train(mode=True)
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optim, T_0=len(self.train_loader), eta_min=self.min_lr, T_mult=2
-        )
         self.scaler = GradScaler()
         self.writer = SummaryWriter(self.log_dir)
 
@@ -69,7 +70,7 @@ class Trainer:
         self.best_loss = float('inf')
 
         for i_epoch in range(self.epochs):
-            
+            self.model.train(mode=True)
             num_batches = len(self.train_loader)
             start = time.time()
             label = ""
@@ -80,10 +81,9 @@ class Trainer:
 
             with autocast(device_type='cuda', dtype=torch.float32):
                 for i_batch, batch in enumerate(self.train_loader):
-                    if batch is None: continue
+                    # if batch is None: continue
                     
                     audios, lenghts, clrs, geos = [item.to(self.device) for item in batch]
-                    self.model.zero_grad()
                     loss, lclr, lgeo = self.forward(audios, lenghts, clrs, geos)
                     
 
@@ -94,11 +94,11 @@ class Trainer:
                     self.writer.add_scalar('Learning_Rate', self.scheduler.get_last_lr()[0], self.train_step)
 
                     total = 10
-                    progress = math.ceil(i_batch*total/num_batches)
+                    progress = math.floor((i_batch+1)*total/num_batches)
                     remain = total - progress
                     label = (
                         f"Epoch: {i_epoch+1:3d}/{self.epochs} "
-                        f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                        f"Batch: {i_batch+1:4d}/{num_batches+1}  [{100*((i_batch+1)/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
                         f"LR: {self.scheduler.get_last_lr()[0]:.07f} "
                         f"CLR_Loss: {lclr:09.06f} GEO_Loss: {lgeo:09.06f} "
                         f"Loss: {loss:09.06f} "
@@ -123,11 +123,10 @@ class Trainer:
                 valid_loss = 0
                 valid_step = 0
                 
-                self.model.train(mode=False)
                 with torch.no_grad():
                     with autocast(device_type='cuda', dtype=torch.float32):
                         for i_batch, batch in enumerate(self.valid_loader):
-                            if batch is None: continue
+                            # if batch is None: continue
                             audios, lenghts, clrs, geos = [item.to(self.device) for item in batch]
                             loss, lclr, lgeo = self.forward(audios, lenghts, clrs, geos, valid=True)
                             
@@ -137,10 +136,10 @@ class Trainer:
 
                             valid_step += 1
                             total = 10
-                            progress = math.ceil(i_batch*total/num_batches)
+                            progress = math.floor((i_batch+1)*total/num_batches)
                             remain = total - progress
                             label = (
-                                f"VALİDATION: {i_batch+1:4d}/{num_batches+1}  [{100*(i_batch/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
+                                f"VALİDATION: {i_batch+1:4d}/{num_batches+1}  [{100*((i_batch+1)/num_batches):6.2f}%]{'█'*progress}{'░'*remain} "
                                 f"AVG_CLR_Loss: {valid_clr_loss/valid_step:09.06f} AVG_GEO_Loss: {valid_geo_loss/valid_step:09.06f} "
                                 f"AVG_Loss: {valid_loss/valid_step:09.06f} "
                                 f"Elapsed: {time.time()-start:8.02f}s "
@@ -154,9 +153,10 @@ class Trainer:
                         self.writer.add_scalar('Loss/Valid', valid_loss/valid_step, i_epoch)
                         self.writer.add_scalar('CLR_Loss/Valid', valid_clr_loss/valid_step, i_epoch)
                         self.writer.add_scalar('GEO_Loss/Valid', valid_geo_loss/valid_step, i_epoch)
+                self.save(i_epoch, valid_loss/valid_step)
             datetime = f"{time.strftime('%H:%M:%S', time.localtime(time.time()))}"
             if self.valid:
-                self.save(i_epoch, valid_loss/valid_step)
+                pass
             else:
                 self.save(i_epoch, epoch_loss/epoch_step)
             print(label, datetime, end="\n")
@@ -248,8 +248,8 @@ class Collator(object):
                                  max_seconds=self.max_seconds,
                                  begin_space=random.uniform(0.3, 1.0),
                                  end_space=random.uniform(0.3,1.0),
-                                 rir_ratio=0.15,
-                                 noise_ratio=0.25,
+                                 rir_ratio=0.25,
+                                 noise_ratio=0.6,
                                  snr=10)
         except Exception as e:
             print(e)

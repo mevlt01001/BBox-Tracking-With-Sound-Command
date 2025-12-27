@@ -169,7 +169,7 @@ class Preprocess(nn.Module):
         self.n_fft = int(sr * win_length_second)
         self.hop_length = int(sr * stride_second)
 
-        self.s1_max = (max_second*sr - self.n_fft)//self.hop_length+1 
+        self.s1_max = ((max_second*sr - self.n_fft)//self.hop_length) + 1 
         """torchaudio.transforms.MelSpectrogram returns [B, NMELS, s1_max]"""
         self.s2_max = ((self.s1_max - self.patch_size)//self.patch_stride) + 1
         """torch.nn.Conv1d returns [B, embeddim, s2_max]"""
@@ -181,19 +181,14 @@ class Preprocess(nn.Module):
             hop_length=self.hop_length,
             n_mels=self.n_mels,
             f_min=0,
-            f_max=self.sr // 2,
+            f_max=self.sr//2,
             power=2.0,
             normalized=True,
-            center=False
+            center=False,
+            window_fn=torch.hann_window
         ).to(device)
 
         self.amplitude_to_db = torchaudio.transforms.AmplitudeToDB("power", top_db=80).to(device)
-
-        self.embedding = nn.Conv1d(in_channels=self.n_mels, 
-                                   out_channels=self.embeddim, 
-                                   kernel_size=self.patch_size, 
-                                   stride=self.patch_stride,
-                                   bias=False).to(device) # [B, NMELS, s1] to [B, embeddim, ((s1 - patch_size)//patch_stride) + 1]
 
     def forward(self, x:Tensor, lenghts:Tensor=None):
         # x.shape = (B, self.max_seconds*self.sr)
@@ -201,22 +196,6 @@ class Preprocess(nn.Module):
     
         x = self.mel_spectrogram.forward(x)       # [B, n_mels, s1_max]
         x = self.amplitude_to_db.forward(x)       # [B, n_mels, s1_max]
-        x = (x+40)/40                             # [B, n_mels, s1_max] normalized to [-1, 1]
-        x = self.embedding(x)                     # [B, embeddim, s2_max]
-        x = x.permute(0, 2, 1)                    # [B, s2_max, embeddim]
-        
-        masks = torch.zeros(B, self.s2_max, device=self.device).bool()
-        
-        if lenghts is not None:
-            with torch.no_grad():
-                s1 = (lenghts - self.n_fft)//self.hop_length+1      # [B]
-                s1 = torch.clamp(s1, min=0, max=self.s1_max)        # [B]
-                s2 = (s1 - self.patch_size)//self.patch_stride+1    # [B]
-                s2 = torch.clamp(s2, min=0, max=self.s2_max)        # [B]
+        x = self.norm1.forward(x).unsqueeze(1)    # [B,1,n_mels, s1_max]        
 
-                indices = torch.arange(self.s2_max, device=self.device)  # [s2_max]
-
-                masks = indices >= s2.unsqueeze(1)                  # [B, s2_max]
-
-        return x, masks
-    
+        return x
