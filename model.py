@@ -73,12 +73,18 @@ class Model(nn.Module):
         self.encoder = self.Resnet18Encoder
 
     def forward(self, x:Tensor,         # x.shape = [B, Waveform]
-                lenghts:Tensor=None):   # lenghts.shape = [B]
+                lenghts:Tensor=None,    # lenghts.shape = [B]
+                require_mel_spectrogram:bool=False):   
         
-        x = self.preprocess(x, lenghts)  # x.shape = [B, n_mels, time]
-        x = self.encoder(x)                     # x.shape = [B, 512]
+        mel = self.preprocess(x, lenghts)  # x.shape = [B, n_mels, time]
+        x = self.encoder(mel)                     # x.shape = [B, 512]
         clr = self.color_linear(x)        # clr.shape = [B, 4]
         geo = self.geo_linear(x)          # geo.shape = [B, 4]
+        if not self.training: 
+            clr = torch.softmax(clr, dim=1)
+            geo = torch.softmax(geo, dim=1)
+            if require_mel_spectrogram:
+                return clr, geo, mel
         return clr, geo
     
     def train(self, mode=True,**kwargs):
@@ -269,7 +275,7 @@ class AudioEncoder(nn.Module):
 class Resnet18Encoder(nn.Module):
     def __init__(self):
         super().__init__()
-        self.resnet = torchvision.models.resnet18(pretrained=False)
+        self.resnet = torchvision.models.resnet18()
         self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         self.resnet.fc = nn.Identity()
 
