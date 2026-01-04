@@ -162,9 +162,9 @@ class Preprocess(nn.Module):
         self.win_length_second = win_length_second  # 25ms for AST (Audio Spectrogram Transformer)
         self.stride_second = stride_second          # 10ms for AST (Audio Spectrogram Transformer)
         self.n_mels = n_mels                        # 128 for AST (Audio Spectrogram Transformer)
-        self.embeddim = embeddim                    # 768 for AST (Audio Spectrogram Transformer)
-        self.patch_size = patch_size                # 16 for AST (Audio Spectrogram Transformer)
-        self.patch_stride = patch_stride            # 10 for AST (Audio Spectrogram Transformer)
+        self.embeddim = embeddim                    # 768 for AST (Audio Spectrogram Transformer) (Unnecessary for resnet)
+        self.patch_size = patch_size                # 16 for AST (Audio Spectrogram Transformer) (Unnecessary for resnet)
+        self.patch_stride = patch_stride            # 10 for AST (Audio Spectrogram Transformer) (Unnecessary for resnet)
 
         self.n_fft = int(sr * win_length_second)
         self.hop_length = int(sr * stride_second)

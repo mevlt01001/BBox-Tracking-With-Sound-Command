@@ -7,6 +7,20 @@ from torch import Tensor
 from .preprocess import Preprocess, load_audios
 from .trainer import Trainer
 
+colors = {
+    0: "unspecified",
+    1: "kırmızı",
+    2: "yeşil",
+    3: "mavi"
+}
+
+geos = {
+    0: "unspecified",
+    1: "üçgen",
+    2: "kare",
+    3: "daire"
+}
+
 class Model(nn.Module):
     def __init__(self,
                  sr,
@@ -30,13 +44,13 @@ class Model(nn.Module):
         self.stride_second = stride_second
         self.n_mels = n_mels
         self.embeddim = embeddim
-        self.patch_size = patch_size
-        self.patch_stride = patch_stride
+        self.patch_size = patch_size    # Unnecessary for now
+        self.patch_stride = patch_stride# Unnecessary for now
         self.max_second = max_second
-        self.num_heads = num_heads
-        self.num_layers = num_layers
-        self.dropout = dropout
-        self.mlp_ratio = mlp_ratio
+        self.num_heads = num_heads      # Unnecessary for now
+        self.num_layers = num_layers    # Unnecessary for now
+        self.dropout = dropout          # Unnecessary for now
+        self.mlp_ratio = mlp_ratio      # Unnecessary for now
         self.device = device
         
         # TODO: Preprocess
@@ -51,26 +65,38 @@ class Model(nn.Module):
             self.max_second,
             device=self.device
         )
-        # # TODO: AudioEncoder: UPDATE: Use nn.TransformerEncoderLayer
-        # self.encoder = AudioEncoder(
-        #     self.embeddim,
-        #     self.num_heads,
-        #     self.num_layers,
-        #     self.dropout,
-        #     self.mlp_ratio,
-        #     self.patch_size,
-        #     self.patch_stride,
-        #     self.preprocess.s2_max,
-        #     self.n_mels,
-        #     device=self.device
-        # )
 
-        # TODO: Head
         self.color_linear = nn.Linear(512, 4).to(self.device)
         self.geo_linear = nn.Linear(512, 4).to(self.device)
 
         self.Resnet18Encoder = Resnet18Encoder().to(self.device)
         self.encoder = self.Resnet18Encoder
+
+        mel_filters = torchaudio.functional.melscale_fbanks(
+            n_freqs=self.preprocess.n_fft, 
+            f_min=0.0, 
+            f_max=8000.0, 
+            n_mels=n_mels, 
+            sample_rate=sr, 
+            mel_scale="htk"
+        )
+
+        self.center_freqs = []
+
+        for i in range(n_mels):
+            peak_index = torch.argmax(mel_filters[:, i]).item()
+            freq_hz = peak_index * (sr / self.preprocess.n_fft)
+            self.center_freqs.append(freq_hz)
+
+        info = f"""
+        MODEL CONFIGURATIONS:
+        Sample Rate: {self.sr}
+        Number of Mel-Bands: {self.n_mels}
+        Mel-Spectrogram Window: {self.preprocess.n_fft} ({int(self.win_length_second*1000)} ms)
+        Mel-Spectrogram Windows Stride: {self.preprocess.hop_length} ({int(self.stride_second*1000)} ms)
+        Embedding Dimension: {self.embeddim}
+        """
+        print(info)
 
     def forward(self, x:Tensor,         # x.shape = [B, Waveform]
                 lenghts:Tensor=None,    # lenghts.shape = [B]
@@ -86,6 +112,14 @@ class Model(nn.Module):
             if require_mel_spectrogram:
                 return clr, geo, mel
         return clr, geo
+    
+    def predict(self, x:Tensor):
+        self.train(False)
+        clr, geo, mel = self.forward(x, require_mel_spectrogram=True)
+        clr, clr_score = colors[clr.argmax().item()], clr[:,clr.argmax()].item()
+        geo, geo_score = geos[geo.argmax().item()], geo[:,geo.argmax()].item()
+
+        return clr, clr_score, geo, geo_score, mel
     
     def train(self, mode=True,**kwargs):
         """Set the module in training mode or train a model.
